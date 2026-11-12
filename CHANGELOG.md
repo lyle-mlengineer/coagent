@@ -13,7 +13,7 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 - `coagent.config` — TOML loading, per-section dataclasses, unknown-key
   rejection, hard 12,288-token context cap, and schema-version refusal
   (PRD FR-DIS-5).
-- `coagent` CLI with `init`, `doctor`, `config`, and `tools` verbs.
+- `coagent` CLI with `init`, `doctor`, `config`, `tools`, and `resume` verbs.
 - `coagent doctor` reports the GPU envelope and whether it is a free-tier T4.
 - Dev extras (`[llm]`, `[ui]`, `[context]`, `[colab]`, `[dev]`) so the package
   installs and tests on CPU without torch.
@@ -49,9 +49,41 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
   scrubbed environment (no tokens reach the child), `CUDA_VISIBLE_DEVICES=""`
   by default (PRD D4), and a 64 KB head/tail output cap (FR-TOL-3).
 
+### Git layer (`coagent.gitx`) — git as the agent's database
+
+- `git.py` — a thin, jailed git runner: scrubbed env, `GIT_TERMINAL_PROMPT=0`
+  (a missing credential errors instead of hanging), porcelain/-z output, and the
+  push allowlist enforced *before* spawn. `GIT_ASKPASS` carries the token; it is
+  never written to `.git/config` (DESIGN §9.2).
+- `commit.py` — the six `Coagent-*` trailers from PRD Appendix B, values
+  flattened to one line so a newline in a task cannot break `--grep`. Refuses
+  an empty commit, which would corrupt step numbering.
+- `session.py` — session branch `coagent/<date>-<id>`; **refuses a dirty tree**
+  with the list of paths and a remedy (FR-GIT-1, AT-3); refuses to work on
+  `main`; reuses an existing branch as a *resume*. coAgent's own runtime state
+  (`.coagent/lock.json`, `tmp/`, `sessions/`) is excluded from the dirty check.
+- `lock.py` — single-writer lock with heartbeat TTL, stale expiry, and `--force`
+  takeover that reports the blocking session (FR-GIT-6).
+- `durable.py` — `checkpoint()`: push the session branch, or fall back to a
+  `git bundle` (full first, then `A..B` increments) when the push fails or a
+  token is missing. A failed sync warns and continues (FR-GIT-4).
+- `resume.py` — a template-extracted briefing (no LLM call) from branch
+  trailers, the plan file, and the JSONL log; falls back to trailers when a
+  hard kill left no log. `next_step` is monotonic across plan commits.
+- `log.py` — JSONL session log, **redacted before the write** (FR-PRV-3).
+- `coagent init` now also adds the `.coagent` runtime entries to `.gitignore`;
+  the session path only warns rather than editing a tracked file.
+
+### Fixed
+
+- Pinning `core.autocrlf` in the git child env made every CRLF worktree look
+  permanently modified. The value is now inherited, never overridden.
+- `os.getpgid`/`start_new_session` do not exist on Windows; both are guarded so
+  the tool suite runs on a dev laptop while Linux keeps real process-group kills.
+
 ### Tests
 
-124 unit tests, CPU-only — no GPU and no network required.
+159 unit tests, CPU-only — no GPU and no network required.
 
 ## [0.1.0] - TBD
 

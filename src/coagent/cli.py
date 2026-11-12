@@ -23,8 +23,81 @@ def _cmd_init(args: argparse.Namespace) -> int:
         print(f"coagent: {exc}", file=sys.stderr)
         return 1
     print(f"wrote {path}")
-    print("commit it so every session uses the same settings:")
-    print(f"  git add {path} && git commit -m \"chore: add coagent config\"")
+    added = _ensure_gitignore(Path(target))
+    if added:
+        print(f"added {len(added)} entr{'y' if len(added) == 1 else 'ies'} to .gitignore: {', '.join(added)}")
+    print("commit them so every session uses the same settings:")
+    print('  git add .coagent/config.toml .gitignore && git commit -m "chore: add coagent config"')
+    return 0
+
+
+_COAGENT_IGNORES = (
+    ".coagent/tmp/",
+    ".coagent/lock.json",
+    ".coagent/sessions/",
+    ".coagent/bundles/",
+    ".coagent/cache/",
+    ".coagent/secrets*",
+)
+
+
+def _ensure_gitignore(root: Path) -> list[str]:
+    """Add coAgent runtime ignores to a repo's .gitignore.
+
+    `coagent init` is an explicit setup action, so editing `.gitignore` here is
+    expected rather than a surprise. The session path warns instead of editing
+    (DESIGN §11).
+    """
+    ignore = root / ".gitignore"
+    try:
+        existing = ignore.read_text(encoding="utf-8") if ignore.is_file() else ""
+    except OSError:
+        return []
+    added = [entry for entry in _COAGENT_IGNORES if entry not in existing]
+    if not added:
+        return []
+    block = "\n# coAgent runtime state (config.toml and plans/ are committed)\n" + "\n".join(added) + "\n"
+    try:
+        with ignore.open("a", encoding="utf-8") as fh:
+            if existing and not existing.endswith("\n"):
+                fh.write("\n")
+            fh.write(block)
+    except OSError:
+        return []
+    return added
+
+
+def _cmd_resume(args: argparse.Namespace) -> int:
+    from .gitx import GitError, SessionError, build_briefing, open_session
+
+    repo_path = Path(args.repo or ".")
+    try:
+        session = open_session(repo_path, session_id=args.session, force=args.force)
+    except (SessionError, GitError) as exc:
+        print(f"coagent: {exc}", file=sys.stderr)
+        return 1
+    briefing = build_briefing(session.repo, session.session_id, session.branch)
+    # A briefing is read-only: never leave a lock behind from a diagnostic.
+    session.close()
+    print(briefing.render())
+    if args.json:
+        import json
+
+        print(
+            json.dumps(
+                {
+                    "session": briefing.session_id,
+                    "branch": briefing.branch,
+                    "next_step": briefing.next_step,
+                    "committed_steps": briefing.committed_steps,
+                    "trailers": briefing.trailers,
+                    "plan": str(briefing.plan_path) if briefing.plan_path else None,
+                    "open_items": briefing.open_items,
+                    "dirty_paths": briefing.dirty_paths,
+                },
+                indent=2,
+            )
+        )
     return 0
 
 
@@ -138,6 +211,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_tools.add_argument("--json", action="store_true", help="print raw JSON schemas")
     p_tools.set_defaults(func=_cmd_tools)
+
+    p_resume = sub.add_parser("resume", help="print the resume briefing for a session")
+    p_resume.add_argument("--repo", help="repo root (default: cwd)")
+    p_resume.add_argument("--session", help="session id to resume (default: from the branch)")
+    p_resume.add_argument("--force", action="store_true", help="take over a live lock")
+    p_resume.add_argument("--json", action="store_true", help="print the briefing as JSON")
+    p_resume.set_defaults(func=_cmd_resume)
 
     return parser
 
