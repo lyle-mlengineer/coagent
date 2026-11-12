@@ -27,7 +27,7 @@ Almost every design decision below is a response to one of these constraints.
 |---|---|---|
 | Ephemeral VM, ~12 h hard cap, idle disconnect | state must survive outside the VM | branch per session, commit + off-VM sync per step, plan file in repo |
 | No inbound ports (only Colab's own proxy) | can't host a service for external clients | UI lives in the notebook; optional `serve_kernel_port_as_window` |
-| One GPU, 16 GB on free tier | 7B at 4-bit, 8–16k usable context | model registry + OOM ladder (§4.5) |
+| One GPU, 16 GB, T4 only | 7B at 4-bit, 8–16k usable context | fixed model registry (§4.1) + OOM ladder (§4.5) |
 | ~25 tok/s decode | turns are minutes | optimize turns-to-done, truncate aggressively |
 | 2 vCPU, ~12 GB RAM | no vector DB or heavy CPU work beside inference | BM25 + symbol graph, subprocess isolation |
 | Root-ish shell, no containers | no real sandbox | approval gates + denylist + branch isolation (§9) |
@@ -68,7 +68,7 @@ Components, and what each owns:
 | Component | Responsibility | Why it is separate |
 |---|---|---|
 | `agent/loop.py` | phase state machine, budgets, stop conditions | the only place that decides what happens next |
-| `llm/*` | `generate(messages) -> text` behind one interface | swap transformers / vLLM / HF endpoint without touching the loop |
+| `llm/*` | `generate(messages) -> text` behind one interface | swap the local backend or an opt-in endpoint without touching the loop |
 | `context/*` | repo map, BM25 retrieval, token budget, truncation | context is the scarcest resource; it needs its own ledger |
 | `tools/*` | typed actions with safety classes | the model can only do what is registered |
 | `gitx/*` | session branch, commit protocol, durable sync, resume, lock | turns git into a database |
@@ -159,7 +159,7 @@ Two classes, one manifest:
 
 ### 3.6 Resume and locking
 
-`coagent resume` does: if the remote is behind the Drive bundles (a crash before the next push), clone from the full bundle and replay the incrementals in order; then `git fetch` → checkout session branch → load plan + last log records → print briefing → continue. Because state is entirely in git, **a session started on VM A can be resumed on VM B**, or on a Pro instance with a bigger model.
+`coagent resume` does: if the remote is behind the Drive bundles (a crash before the next push), clone from the full bundle and replay the incrementals in order; then `git fetch` → checkout session branch → load plan + last log records → print briefing → continue. Because state is entirely in git, **a session started on VM A can be resumed on VM B** after a preemption or restart.
 
 Concurrent sessions are prevented by an advisory lock: `.coagent/lock.json` with `session_id`, `expires_at` (heartbeat +30 min), committed on start. A live lock means refuse; `--force` takes over (single-user tool, so advisory is enough).
 
@@ -167,19 +167,18 @@ Concurrent sessions are prevented by an advisory lock: `.coagent/lock.json` with
 
 ## 4. Model layer
 
-### 4.1 Tier registry
+### 4.1 Model registry (T4 only)
 
-| Tier | GPU / RAM | Model | Quant | Context | Notes |
-|---|---|---|---|---|---|
-| Free | T4 16 GB | Qwen2.5-Coder-7B-Instruct | NF4 | 12k | the default |
-| Free, low | T4 | Qwen2.5-Coder-3B-Instruct | NF4 | 16k | when 7B won't fit with the repo map |
-| Pro | L4 24 GB | Qwen2.5-Coder-14B-Instruct | NF4 / AWQ | 16k | quality jump, still usable speed |
-| Pro high | A100 40 GB | Qwen3-Coder-30B-A3B (MoE) or 14B bf16 | 4-bit | 32k | 3B active params → fast despite size |
-| No GPU | CPU | Qwen2.5-Coder-3B GGUF | Q4 | 8k | escape hatch only; kept behind the same interface |
+| Slot | Model | Quant | Context | Notes |
+|---|---|---|---|---|
+| Default | Qwen2.5-Coder-7B-Instruct | NF4 | 12k | the only validated configuration |
+| Fallback | Qwen2.5-Coder-3B-Instruct | NF4 | 8k | only if 7B cannot fit after the OOM ladder |
 
-Why Qwen2.5-Coder: strongest code model per VRAM at 7B, 32k native context, a documented tool-call chat template, permissive license, first-class `transformers` support. DeepSeek-Coder-V2-Lite is the runner-up (MoE, cheap active compute). CodeLlama is too old to be worth the context budget.
+v1 supports exactly these two configurations. L4/A100, TPU, CPU-only execution, and multi-GPU are out of scope (PRD D-1), and preflight refuses to start on hardware that fails the T4 envelope.
 
-**Why local `transformers` at all** (vs. an API): privacy, no keys, no per-token cost, works on a free tier. The price is model quality, which the rest of this document is spent compensating for. The `llm/` interface also ships `HFEndpointBackend` so the same loop can point at a hosted 70B when quality matters more than privacy — this is a one-line config change, not an architecture change.
+Why Qwen2.5-Coder: strongest code model per VRAM at 7B, 32k native context, a documented tool-call chat template, permissive license, first-class `transformers` support. DeepSeek-Coder-V2-Lite is the runner-up (MoE, cheap active compute) but its 16B total footprint is too tight beside a 12k KV cache on a 16 GB T4. CodeLlama is too old to be worth the context budget.
+
+**Why local `transformers` at all** (vs. an API): privacy, no keys, no per-token cost, works on a free tier. The price is model quality, which the rest of this document is spent compensating for. The `llm/` interface keeps an endpoint backend for future work, but v1 ships local-only: a hosted model would break the zero-cost guarantee and the privacy claim (PRD NFR-10).
 
 ### 4.2 Inference settings that actually matter
 
@@ -195,7 +194,7 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 ```
 
-- T4 is Turing: `float16`, `sdpa`. A100/L4: `bfloat16`, `flash_attention_2`.
+- T4 is Turing: `float16`, `sdpa`. bf16 and FlashAttention-2 must not be assumed; no other accelerator is supported (PRD D-1).
 - `TextIteratorStreamer(skip_prompt=True)` for live UI; generation on a worker thread.
 - Sampling: `T=0.2` for edits (determinism beats creativity when writing diffs), `T=0.7` for planning, `top_p=0.95`, `repeat_penalty` mild, `max_new_tokens=1024` for edits, `2048` for plans.
 - Fixed seed per session; log it. Reproducibility is worth more than the tiny diversity gain.
@@ -227,7 +226,7 @@ A 7B model emits malformed JSON perhaps 3–8% of the time, and a malformed tool
 
 So a realistic session is **3–6 tasks**, not 20. This is why task decomposition and commit-per-step matter more than any inference optimization. Two optimizations are worth having, one is a trap:
 
-- **Worth it:** keep the static prefix (system + tool docs + repo map) at the front of every prompt so vLLM's prefix cache or `StaticCache` reuse applies; order messages so the volatile suffix is small.
+- **Worth it:** keep the static prefix (system + tool docs + repo map) at the front of every prompt so `StaticCache` reuse applies; order messages so the volatile suffix is small.
 - **Worth it:** run `pytest`/`ruff` in the background while the model decodes the next step.
 - **Not worth it:** multi-agent fan-out. One GPU means serialized inference; "agents" would just be turns with extra prompts and less shared context.
 
@@ -237,8 +236,8 @@ On `torch.cuda.OutOfMemoryError`, in order, without losing the session:
 
 1. `gc.collect(); torch.cuda.empty_cache()`, retry with 25% less context.
 2. Halve `max_new_tokens`.
-3. Drop to the next tier's 3B model (weights swap ~20 s).
-4. Offer CPU fallback / endpoint fallback in the UI.
+3. Drop to the 3B fallback model (weights swap ~20 s).
+4. Stop with a checkpointed report. CPU-only and hosted fallbacks are out of scope (PRD D-1).
 
 Prefill memory is the usual culprit, not generation — shrink *retrieved context* first, not the prompt instructions.
 
@@ -291,7 +290,7 @@ Ranking is PageRank-lite: `score = 0.5·reference_count + 0.3·recently_edited +
 
 ### 5.3 Retrieval
 
-BM25 over function-sized chunks, plus symbol-graph adjacency (callers/callees of the files already in context). **No vector store**: on 2 vCPU beside a GPU, an embedding index is a memory and latency tax for a ranking gain BM25 mostly covers in a repo of this size. `sentence-transformers/all-MiniLM-L6-v2` (~80 MB) is an optional Pro-tier upgrade, not a dependency.
+BM25 over function-sized chunks, plus symbol-graph adjacency (callers/callees of the files already in context). **No vector store**: on 2 vCPU beside a GPU, an embedding index is a memory and latency tax for a ranking gain BM25 mostly covers in a repo of this size. `sentence-transformers/all-MiniLM-L6-v2` (~80 MB) is an optional future upgrade, not a dependency, and not part of v1.
 
 ### 5.4 Invariants
 
@@ -361,7 +360,7 @@ These are the reason to run *in* Colab rather than beside it:
 - `display_artifact` → `IPython.display.Image/HTML` so a plot or rendered table appears inline in the chat cell.
 - `save_artifact` → `files.download()` for one-click retrieval, Drive for large outputs.
 - `mount_drive` → `google.colab.drive.mount`, asked once, used for HF cache and big artifacts; everything it exposes is still behind the read jail (§6.2).
-- `gpu_info` → preflight: read `torch.cuda.get_device_properties`, pick the tier from §4.1, set `max_context`.
+- `gpu_info` → preflight: read `torch.cuda.get_device_properties`, verify the T4 envelope (PRD D1), select 7B or 3B, then set `max_context`.
 
 ---
 
@@ -511,7 +510,7 @@ Repo files, issue text, and command output are untrusted. The defense has three 
 
 | Symptom | Detection | Recovery |
 |---|---|---|
-| CUDA OOM | exception | shrink context → halve output → 3B → CPU (§4.5) |
+| CUDA OOM | exception | shrink context → halve output → 3B → stop (§4.5) |
 | CUDA assert / poisoned context | exception on next kernel | restart runtime; state is in git; `resume` |
 | Preemption / idle disconnect | heartbeat gap | `resume` from the last synced step; at most one step is lost |
 | Infinite edit loop | fingerprint ×3 | replan, then stop with diagnostic |
@@ -537,7 +536,7 @@ coagent/
     cli.py                         # run | resume | chat | eval | push
     config.py
     agent/    loop.py prompts.py budget.py state.py
-    llm/      base.py transformers_backend.py vllm_backend.py
+    llm/      base.py transformers_backend.py
               hf_endpoint_backend.py registry.py grammar.py
     context/  repo_map.py retrieval.py compressor.py tokens.py
     tools/    base.py fs.py shell.py python_exec.py git_tools.py
@@ -621,7 +620,7 @@ A fixed toy repo plus 20 tasks, run headless (`coagent eval`), because "it feels
 
 Metrics: success rate, **turns-to-done**, wall-clock, tokens, commits per task, regression rate, human-takeover rate. The interesting number is turns-to-done — it is the one the whole context design is optimizing.
 
-**Sharding.** Twenty tasks at ~20 minutes each is roughly 7 h of generation, and retries make it worse than a single session tolerates. `coagent eval --shard k/5` runs 4 tasks per session and appends to `evals/results.jsonl`; `--report` merges the shards. A 1.5B smoke suite fits one session; the full suite runs on whichever tier can pay for it. Because the harness is the same loop driven with `--auto` over a fixed task list, sharding is a different task list, not a second code path.
+**Sharding.** Twenty tasks at ~20 minutes each is roughly 7 h of generation, and retries make it worse than a single session tolerates. `coagent eval --shard k/5` runs 4 tasks per session and appends to `evals/results.jsonl`; `--report` merges the shards. A 1.5B smoke suite fits one session; the full suite is sharded across sessions on the same T4. Because the harness is the same loop driven with `--auto` over a fixed task list, sharding is a different task list, not a second code path.
 
 **Baseline.** turns-to-done is meaningless without a reference: record a human-time baseline on the same tasks, plus one cloud-agent run, and report all three together.
 
@@ -650,18 +649,18 @@ Definition of shipped: *from a fresh Colab session, coAgent fixes a failing test
 | Multi-agent (planner/coder/critic as separate runs) | one GPU serializes inference; costs turns without adding information |
 | Fine-tuning the model | out of scope for v1; tests + context engineering dominate the ROI |
 | Local orchestrator + Colab as remote executor | a valid topology, but it moves the LLM off the free GPU unless you tunnel — the in-Colab design keeps everything in one place |
-| Hosted API (OpenAI/Anthropic) | defeats privacy/free/no-keys; kept as an opt-in backend, not the default |
+| Hosted API (OpenAI/Anthropic) | defeats privacy and zero-cost; not shipped in v1 (PRD NFR-10) |
 | `share=True` Gradio | tunnel flakiness, rate limits, public exposure; Colab's port proxy is enough |
 
 ---
 
 ## 15. Open questions
 
-Items 6–9 now have working assumptions that the rest of this document follows; 1–5 and 10–12 still need a decision.
+Items 1 and 6–9 are settled (1 by PRD D-1); 2–5 and 10–12 still need a decision.
 
 | # | Question | Why it changes the design | Working assumption |
 |---|---|---|---|
-| 1 | Tier target: free T4 only, or Pro/G4 too? | sets the context budget and whether vLLM is worth shipping | free T4 16 GB (7B / 12k); L4/A100 auto-detected via `gpu_info`, not optimized |
+| 1 | Tier target: free T4 only, or Pro/G4 too? | sets the context budget and the model registry | **decided:** free T4 16 GB only (7B/12k, 3B/8k fallback); no Pro, CPU, or TPU path (PRD D-1) |
 | 2 | Primary surface: notebook or CLI? | determines where the UI investment goes | notebook-first; the CLI wraps the same loop |
 | 3 | Scope: one repo or a workspace? | multi-repo needs cross-repo retrieval and per-repo locks | one repo per session |
 | 4 | How first-class are notebooks? | cell outputs are unbudgeted and large | first-class notebook tools; outputs to artifacts (§5.1) |
