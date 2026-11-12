@@ -177,6 +177,27 @@ def _cmd_tools(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_models(args: argparse.Namespace) -> int:
+    from .llm import MODELS, preflight_gpu
+
+    cfg = load_config(args.config)
+    preflight = preflight_gpu() if args.gpu else None
+    if preflight is not None:
+        print(f"gpu:     {preflight.describe()}")
+        print(f"verdict: {'OK' if preflight.ok else 'REFUSED'}")
+        if not preflight.ok:
+            print(f"reason:  {preflight.reason}")
+        print()
+    print(f"configured: {cfg.model.name} @ {cfg.model.quant} · ctx {cfg.model.max_context}")
+    print()
+    for spec in MODELS.values():
+        mark = "*" if spec.name == cfg.model.name else " "
+        print(f" {mark} {spec.key:15s} {spec.trailer_id:40s} ctx {spec.max_context:>6d}  ~{spec.vram_gb:.1f} GB")
+        if spec.notes:
+            print(f"   {spec.notes}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="coagent",
@@ -218,6 +239,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_resume.add_argument("--force", action="store_true", help="take over a live lock")
     p_resume.add_argument("--json", action="store_true", help="print the briefing as JSON")
     p_resume.set_defaults(func=_cmd_resume)
+
+    p_models = sub.add_parser("models", help="list the validated models and check the GPU envelope")
+    p_models.add_argument("--config", help="path to a config.toml (default: search upward)")
+    p_models.add_argument("--gpu", action="store_true", help="run the T4 preflight check")
+    p_models.set_defaults(func=_cmd_models)
 
     return parser
 

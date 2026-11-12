@@ -13,7 +13,8 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 - `coagent.config` — TOML loading, per-section dataclasses, unknown-key
   rejection, hard 12,288-token context cap, and schema-version refusal
   (PRD FR-DIS-5).
-- `coagent` CLI with `init`, `doctor`, `config`, `tools`, and `resume` verbs.
+- `coagent` CLI with `init`, `doctor`, `config`, `tools`, `resume`, and
+  `models` verbs.
 - `coagent doctor` reports the GPU envelope and whether it is a free-tier T4.
 - Dev extras (`[llm]`, `[ui]`, `[context]`, `[colab]`, `[dev]`) so the package
   installs and tests on CPU without torch.
@@ -81,9 +82,41 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 - `os.getpgid`/`start_new_session` do not exist on Windows; both are guarded so
   the tool suite runs on a dev laptop while Linux keeps real process-group kills.
 
+### Model layer (`coagent.llm`)
+
+- `base.py` — the `LLMBackend` interface (`generate`, `count_tokens`, streaming,
+  cancel, `load`/`unload`), plus `TokenBudget`, which rejects an over-cap request
+  **before** generation using the model's own tokenizer (PRD D2, FR-CTX-6), and
+  `FakeBackend`, a scripted backend that makes the whole loop testable on CPU.
+- `grammar.py` — tolerant envelope extraction with a 5-step escalation ladder:
+  labelled fence → bare fence → bare `{...}` (balanced-brace scan that respects
+  strings) → JSON5-ish repair (single quotes, unquoted keys, trailing commas) →
+  failure with a **corrective message** the loop feeds straight back. Never
+  raises `JSONDecodeError` at the caller.
+- `registry.py` — exactly two validated configurations (7B/NF4/12k and
+  3B/NF4/8k fallback), and `preflight_gpu()`, which checks T4 / compute 7.5 /
+  ≥14 GB VRAM and returns an actionable refusal instead of raising (PRD D1).
+- `transformers_backend.py` — NF4 4-bit with fp16 compute and
+  `attn_implementation="sdpa"` (Turing has no bf16 and no FlashAttention-2),
+  `expandable_segments` set before torch import, `TextIteratorStreamer` on a
+  worker thread, a real `StoppingCriteria` for cancel, and the OOM ladder
+  (`shrink_context` → `halve_output` → `fallback_model` → `stop`) that unloads
+  the model and never loses the session. Torch and transformers are resolved
+  through module-level accessors, so `import coagent` stays torch-free and the
+  orchestration is testable without a GPU.
+
+### Fixed
+
+- `_is_cuda_oom` missed a wrapped `OutOfMemoryError` that only appeared in the
+  message text; the OOM ladder now recognises it.
+- `OutOfMemoryLadder.exhausted` reported False after all three recovery actions;
+  it now flips once the ladder is spent.
+
 ### Tests
 
-159 unit tests, CPU-only — no GPU and no network required.
+218 unit and integration tests, CPU-only — no GPU and no network required.
+Includes an integration test that drives a scripted model through envelope
+parsing, the budget check, and the real tool registry to a genuine file edit.
 
 ## [0.1.0] - TBD
 
