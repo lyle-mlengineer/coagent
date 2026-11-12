@@ -359,7 +359,14 @@ class ArtifactStore:
 
         The manifest is committed alongside the run, so it has to exist as soon as
         the run directory does — even if every artifact went to Drive.
+
+        An **empty** manifest is deliberately not written. Nothing references it,
+        nothing commits it, and an untracked file left in the tree makes the next
+        session refuse to start with `DirtyTreeError` — a stale empty manifest is
+        worse than none, because it breaks the resume path (FR-GIT-5).
         """
+        if not self.manifest.artifacts and not self.manifest_path.is_file():
+            return self.manifest_path
         return self._write_manifest()
 
     def committed_paths(self) -> list[str]:

@@ -115,6 +115,32 @@ _READ_TOOLS = {"read_file", "read_notebook"}
 _PLAN_PREFIX = ".coagent/plans/"
 
 
+def _is_url(text: str) -> bool:
+    """True for the clone URLs a user would paste (DESIGN §11).
+
+    Deliberately narrow: a local path that merely ends in `.git` is still a path,
+    so the scheme (or an ssh host form) has to decide it.
+    """
+    return text.startswith(("https://", "http://", "ssh://", "git@"))
+
+
+class HardwareError(RuntimeError):
+    """The runtime cannot host the model (PRD D1, FR-BOOT-2).
+
+    Raised at construction, before any weights are downloaded, so the message the
+    user reads is the reason and not a CUDA stack trace.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(
+            f"{reason}\n\n"
+            "To run anyway on unsupported hardware (the 3B fallback at 8k context may fit):\n"
+            '    coAgent(repo=..., allow_unsupported=True)\n'
+            "or set `[model] key = \"qwen-coder-3b\"` in .coagent/config.toml."
+        )
+
+
 class coAgent:
     """The agent. Construct once per session, then `chat()` or `run()`."""
 
@@ -133,9 +159,12 @@ class coAgent:
         on_event: Callable[[str, dict[str, Any]], None] | None = None,
         renderer: Callable[[str, str, str], None] | None = None,
         force: bool = False,
+        allow_unsupported: bool = False,
     ) -> None:
-        self.cfg = config or load_config(start=repo)
-        self.repo_path = Path(repo).resolve()
+        self.cfg = config or load_config(start=repo if not _is_url(str(repo)) else ".")
+        # FR-BOOT-1: `coAgent(repo="https://github.com/you/project.git")` is the
+        # documented one-liner, so a URL must clone rather than fail as a path.
+        self.repo_path = self._resolve_repo(repo, token=token)
         self.interactive = interactive
         self.auto = auto
         self.token = token
@@ -147,6 +176,13 @@ class coAgent:
         self.redactor = Redactor([token] if token else [])
 
         if backend is None:
+            # FR-BOOT-2: refuse before loading weights, not after four gigabytes
+            # of them and a CUDA error. A caller who injects a backend has
+            # already made their own hardware decision, so this is skipped.
+            self.preflight = self._preflight(allow_unsupported=allow_unsupported)
+            if not self.preflight.ok:
+                raise HardwareError(self.preflight.reason)
+            self._emit("preflight", {"summary": self.preflight.describe()})
             from ..llm import make_backend
 
             spec = get_model_by_name(self.cfg.model.name)
@@ -206,6 +242,45 @@ class coAgent:
         self._last_notes = ""
         self._last_failure = ""
         self._last_was_write = False
+
+    # --------------------------------------------------------------- preflight
+
+    def _resolve_repo(self, repo: str | Path, *, token: str | None) -> Path:
+        """Turn a path, or a git URL, into a local clone (DESIGN §3.1).
+
+        The clone is shallow because the runtime is disposable and the branch is
+        what matters; history is on the remote.
+        """
+        text = str(repo)
+        if not _is_url(text):
+            return Path(repo).resolve()
+        from ..gitx.session import clone_repo
+
+        name = text.rstrip("/").rsplit("/", 1)[-1]
+        name = name[:-4] if name.endswith(".git") else name
+        # `/content` on Colab, the cwd elsewhere: a workspace next to the runtime,
+        # not inside whatever directory happened to be current.
+        base = Path("/content") if Path("/content").is_dir() else Path.cwd()
+        dest = base / "coagent-workspace" / (name or "project")
+        if not (dest / ".git").exists():
+            clone_repo(text, dest, depth=1, token=token)
+            self._emit("cloned", {"url": text, "path": str(dest)})
+        return dest
+
+    def _preflight(self, *, allow_unsupported: bool) -> Any:
+        """The T4 envelope check (PRD D1, FR-BOOT-2).
+
+        `allow_unsupported` is documented rather than hidden: the 3B fallback may
+        run where the 7B will not, and refusing outright would block that.
+        """
+        from ..llm import preflight_gpu
+
+        result = preflight_gpu()
+        if not result.ok and allow_unsupported:
+            result.ok = True
+            result.reason = ""
+            result.override_allowed = True
+        return result
 
     # ------------------------------------------------------------- public API
 

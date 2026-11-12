@@ -10,12 +10,25 @@
   <img src="https://img.shields.io/badge/Model-7B%20NF4%20%C2%B7%2012k-7EF0C0?style=for-the-badge&logoColor=black" alt="7B NF4, 12k context"/>
   <img src="https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11"/>
   <a href="https://github.com/lyle-mlengineer/coagent-web"><img src="https://img.shields.io/badge/Web-coagent--web-E05785?style=for-the-badge&logo=github&logoColor=white" alt="Web front door"/></a>
+  <a href="https://colab.research.google.com/github/lyle-mlengineer/coagent/blob/main/notebooks/bootstrap.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open in Colab"/></a>
   <img src="https://img.shields.io/badge/License-Apache%202.0-D22128?style=for-the-badge&logo=apache&logoColor=white" alt="Apache 2.0"/>
 </p>
 
-**[Design](./DESIGN.md) · [PRD](./PRD.md) · [Web front door](https://github.com/lyle-mlengineer/coagent-web)**
+**[Open in Colab](https://colab.research.google.com/github/lyle-mlengineer/coagent/blob/main/notebooks/bootstrap.ipynb) · [Design](./DESIGN.md) · [PRD](./PRD.md) · [Web front door](https://github.com/lyle-mlengineer/coagent-web)**
 
 > **Design stage.** This repository holds the full architecture (`DESIGN.md`) and product requirements (`PRD.md`); implementation starts at v0.1 in the build plan below. Every interface shown here — the cell, the commands, the config — is the target v0.1 surface, not a shipped package yet.
+
+### Run it
+
+Open the bootstrap notebook in Colab — **Runtime → Change runtime type → T4 GPU** — and run the cells. The whole install story is three lines:
+
+```python
+from coagent import coAgent
+agent = coAgent(repo="https://github.com/you/project.git")
+agent.chat("add a chunked CSV loader and test that dtypes are preserved")
+```
+
+The notebook checks your hardware before loading weights and refuses with a reason if the runtime cannot host the model. Everything after that — the plan, each edit, the test result, the commit — appears in the cell, and every checkpoint lands on a `coagent/<session>` branch you can review.
 
 **coAgent is an AI coding agent that lives inside a Google Colab notebook.** It clones your repo into the free T4, plans inside your own files, edits with a locally loaded 7B model, runs your tests on CPU, and commits every checkpoint back to git — on a branch you can review. The runtime is disposable; the repository is the memory.
 

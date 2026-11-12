@@ -162,10 +162,25 @@ def test_manifest_round_trips(store: ArtifactStore, repo: Path) -> None:
     assert manifest.artifacts[0].sha256 == store.manifest.artifacts[0].sha256
 
 
-def test_flush_writes_a_manifest_with_no_artifacts(store: ArtifactStore, repo: Path) -> None:
+def test_flush_writes_no_manifest_when_there_is_nothing_to_record(
+    store: ArtifactStore, repo: Path
+) -> None:
+    """An empty manifest must not dirty the tree.
+
+    Nothing commits it, so leaving it behind makes the *next* session refuse to
+    start with DirtyTreeError — the resume path (FR-GIT-5) breaks on a manifest
+    that says nothing.
+    """
+    path = store.flush()
+    assert not path.exists()
+    assert store.manifest.artifacts == []
+
+
+def test_flush_writes_a_manifest_once_an_artifact_exists(store: ArtifactStore) -> None:
+    store.save_text("small", "small.txt")
     path = store.flush()
     assert path.is_file()
-    assert store.manifest.artifacts == []
+    assert "small.txt" in path.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------- trailer paths

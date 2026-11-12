@@ -238,6 +238,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             token=None,
             on_event=on_event,
             force=args.force,
+            allow_unsupported=args.allow_unsupported,
         )
     except Exception as exc:  # noqa: BLE001 - every refusal is a message, not a traceback
         print(f"coagent: {exc}", file=sys.stderr)
@@ -330,6 +331,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--auto", action="store_true", help="pre-approve the plan")
     p_run.add_argument("--dry-run", action="store_true", help="use a scripted model (no GPU)")
     p_run.add_argument("--force", action="store_true", help="take over a live session lock")
+    p_run.add_argument(
+        "--allow-unsupported",
+        action="store_true",
+        help="run on non-T4 hardware (unsupported, unvalidated)",
+    )
     p_run.set_defaults(func=_cmd_run)
 
     return parser

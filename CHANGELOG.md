@@ -349,7 +349,30 @@ logic and is fully tested; `notebook.py` is plumbing.
 
 ### Tests
 
-421 unit and integration tests, CPU-only — no GPU and no network required.
+434 unit and integration tests, CPU-only — no GPU and no network required.
+
+### Bootstrap (FR-BOOT-1/2, FR-DIS-2)
+
+- `notebooks/bootstrap.ipynb` — the Open-in-Colab landing page. A preflight cell,
+  then **exactly three lines** (install, construct, chat), then what the three
+  lines hide: the log, the reviewable branch, the resume-after-death cell, and
+  the text-command fallback. Tests assert the three-line limit and the
+  preflight-before-agent ordering so the landing page cannot silently rot.
+- **FR-BOOT-2 is now enforced, not just printed.** `coAgent.__init__` runs the
+  T4 preflight *before* constructing the backend and raises `HardwareError` with
+  an actionable message, so a CPU runtime fails in a second instead of after a
+  four-gigabyte download. `allow_unsupported=True` (and `coagent run
+  --allow-unsupported`) is documented in the error itself. An injected backend
+  skips the check — that caller has already decided about hardware.
+- `coAgent(repo="https://…")` now clones into `coagent-workspace/` instead of
+  failing as a bad path, so the documented one-liner is true. Shallow, once:
+  an existing `.git` is reused rather than re-cloned. `/content` on Colab, the
+  cwd elsewhere.
+- **Fixed: a run no longer leaves the tree dirty.** `ArtifactStore.flush()`
+  wrote an empty `artifacts/<session>/manifest.json` that nothing committed, and
+  the next session then refused to start with `DirtyTreeError` — the resume path
+  was broken by a file that recorded nothing. An empty manifest is now not
+  written; a real one still is.
 Includes end-to-end runs on a real git repository: a scripted model drives
 SURVEY → PLAN → ACT → VERIFY → commit with trailers, and separate tests prove
 the dirty-tree refusal, plan rejection before any write, honest verify trailers,
