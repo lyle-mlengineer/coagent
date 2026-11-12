@@ -68,6 +68,42 @@ def _cmd_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_tools(args: argparse.Namespace) -> int:
+    """Print the tool schemas for a phase — the exact contract the model sees."""
+
+    from .tools import PHASE_SAFETY, build_registry
+
+    cfg = load_config(args.config)
+    repo = Path(args.repo or ".").resolve()
+    if not repo.is_dir():
+        print(f"coagent: {repo} is not a directory", file=sys.stderr)
+        return 1
+    try:
+        if args.phase == "all":
+            for phase in PHASE_SAFETY:
+                names = build_registry(repo, cfg, phase=phase).names()
+                label = ", ".join(names) if names else "(none - plan cannot act)"
+                print(f"{phase:8s} ({len(names)}): {label}")
+            return 0
+        reg = build_registry(repo, cfg, phase=args.phase)
+    except ValueError as exc:
+        print(f"coagent: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(reg.schemas_json())
+        return 0
+    print(f"phase {args.phase}: {len(reg)} tool(s)")
+    for schema in reg.schemas():
+        params = schema["parameters"]
+        required = set(params.get("required", []))
+        args_desc = ", ".join(
+            name if name in required else f"{name}?" for name in params["properties"]
+        )
+        print(f"  {schema['name']:12s} [{schema['safety']:5s}] ({args_desc})")
+        print(f"      {schema['description']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="coagent",
@@ -90,6 +126,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_config.add_argument("--path", action="store_true", help="print only the config path")
     p_config.add_argument("--effective", action="store_true", help="print effective values as TOML")
     p_config.set_defaults(func=_cmd_config)
+
+    p_tools = sub.add_parser("tools", help="list the tool schemas available per phase")
+    p_tools.add_argument("--config", help="path to a config.toml (default: search upward)")
+    p_tools.add_argument("--repo", help="repo root to jail against (default: cwd)")
+    p_tools.add_argument(
+        "--phase",
+        default="act",
+        choices=["survey", "plan", "act", "verify", "report", "all"],
+        help="phase to inspect (default: act)",
+    )
+    p_tools.add_argument("--json", action="store_true", help="print raw JSON schemas")
+    p_tools.set_defaults(func=_cmd_tools)
 
     return parser
 
