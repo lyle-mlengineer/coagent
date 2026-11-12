@@ -88,14 +88,27 @@ _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 
 @dataclass(frozen=True)
 class Signature:
-    """One line of the map: a def, a class, or a class member."""
+    """One line of the map: a def, a class, or a class member.
+
+    ``start_line``/``end_line`` are 1-based and inclusive, and bound the *body*
+    as well as the signature. They exist so BM25 retrieval (DESIGN §5.3) can cut
+    function-sized chunks from the same parse that built the map — a second
+    parse for chunking would double the only real cost in this module.
+    """
 
     kind: str  # "class" | "def" | "member" | "const"
     text: str  # rendered signature, no body, no trailing colon
+    start_line: int = 0
+    end_line: int = 0
 
     def render(self) -> str:
         indent = {"def": "  ", "member": "    ", "const": "  "}.get(self.kind, "")
         return f"{indent}{self.text}"
+
+    @property
+    def name(self) -> str | None:
+        """The defined symbol, or None for shapes we cannot name (e.g. `X = ...`)."""
+        return _symbol_name(self.text)
 
 
 @dataclass
@@ -180,9 +193,11 @@ class _Parsers:
                     return
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     kind = "member" if in_class else "def"
-                    out.append(Signature(kind, _render_function(node)))
+                    out.append(
+                        Signature(kind, _render_function(node), *_span(node))
+                    )
                 elif isinstance(node, ast.ClassDef):
-                    out.append(Signature("class", _render_class(node)))
+                    out.append(Signature("class", _render_class(node), *_span(node)))
                     # One level of members only: nested classes collapse.
                     if depth < 1:
                         visit_body(node.body, in_class=True, depth=depth + 1)
@@ -192,7 +207,9 @@ class _Parsers:
                     # so `a = b = f()` does not leak a call expression.
                     names = [t.id for t in node.targets if isinstance(t, ast.Name)]
                     if names:
-                        out.append(Signature("const", f"{' = '.join(names)} = ..."))
+                        out.append(
+                            Signature("const", f"{' = '.join(names)} = ...", *_span(node))
+                        )
 
         visit_body(tree.body, in_class=False, depth=0)
         return out
@@ -246,7 +263,8 @@ class _Parsers:
                 head = _node_header(raw, node)
                 if head:
                     kind = "class" if ntype == "class_definition" else ("member" if depth else "def")
-                    out.append(Signature(kind, head))
+                    # tree-sitter rows are 0-based; the chunker wants 1-based.
+                    out.append(Signature(kind, head, _row(node, "start_point"), _row(node, "end_point")))
                     if ntype == "class_definition" and depth < 1:
                         for child in getattr(node, "named_children", []):
                             walk(child, depth=depth + 1)
@@ -269,17 +287,32 @@ class _Parsers:
         """
         out: list[Signature] = []
         class_depth = 0
-        for line in text.splitlines():
+        lines = text.splitlines()
+        # (signature index, indent) so a def's end can be resolved on the next
+        # line that dedents to its level.
+        open_defs: list[tuple[int, int]] = []
+
+        def close_defs(upto_line: int, indent_le: int) -> None:
+            """End every open def whose body has now dedented by ``upto_line``."""
+            for idx, body_indent in list(open_defs):
+                if indent_le <= body_indent - 1:
+                    sig = out[idx]
+                    if not sig.end_line:
+                        out[idx] = Signature(sig.kind, sig.text, sig.start_line, upto_line - 1)
+                    open_defs.remove((idx, body_indent))
+
+        for lineno, line in enumerate(lines, start=1):
             if len(out) >= MAX_SIGNATURES_PER_FILE:
                 break
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
             indent = len(line) - len(line.lstrip())
+            close_defs(lineno, indent)
             m_class = re.match(r"class\s+(\w+)\s*(\([^)]*\))?", stripped)
             if m_class:
                 cls_indent = indent
-                out.append(Signature("class", f"class {m_class.group(1)}"))
+                out.append(Signature("class", f"class {m_class.group(1)}", lineno, 0))
                 class_depth = cls_indent
                 continue
             m_def = re.match(
@@ -290,12 +323,40 @@ class _Parsers:
                 prefix = "async def" if m_def.group(1) else "def"
                 args = " ".join(m_def.group(3).split())
                 kind = "member" if indent > class_depth else "def"
-                out.append(Signature(kind, f"{prefix} {m_def.group(2)}({args})".rstrip("(, ")))
+                out.append(
+                    Signature(kind, f"{prefix} {m_def.group(2)}({args})".rstrip("(, "), lineno, 0)
+                )
+                open_defs.append((len(out) - 1, indent))
                 continue
             m_assign = re.match(r"([A-Z][A-Z0-9_]{2,})\s*=", stripped)
             if m_assign and indent == 0:
-                out.append(Signature("const", f"{m_assign.group(1)} = ..."))
+                out.append(Signature("const", f"{m_assign.group(1)} = ...", lineno, lineno))
+
+        # Anything still open runs to the end of the file.
+        for idx, _ in open_defs:
+            sig = out[idx]
+            out[idx] = Signature(sig.kind, sig.text, sig.start_line, len(lines))
         return out
+
+
+def _row(node: object, attr: str) -> int:
+    """Read a tree-sitter point's 0-based row as a 1-based line number.
+
+    tree-sitter nodes are untyped from Python's point of view, so the attribute
+    access lives here rather than being scattered through the walk.
+    """
+    try:
+        return int(getattr(node, attr)[0]) + 1  # noqa: B009 - dynamic by design
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _span(node: ast.stmt) -> tuple[int, int]:
+    """1-based inclusive line span of an AST node (Python 3.8+ has end_lineno)."""
+    return (
+        int(getattr(node, "lineno", 0) or 0),
+        int(getattr(node, "end_lineno", 0) or getattr(node, "lineno", 0) or 0),
+    )
 
 
 def _node_header(raw: bytes, node: object) -> str:

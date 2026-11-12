@@ -144,6 +144,7 @@ class ContextConfig:
     """
 
     repo_map_tokens: int = 2000
+    retrieved_tokens: int = 3000
     max_files: int = 800
 
     def __post_init__(self) -> None:

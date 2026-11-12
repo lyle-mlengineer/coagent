@@ -99,8 +99,12 @@ class AgentResult:
         return "\n".join(lines)
 
 
-_WRITE_TOOLS = {"edit_file", "write_file"}
+_WRITE_TOOLS = {"edit_file", "write_file", "edit_notebook"}
 _EXEC_TOOLS = {"run_shell", "run_python"}
+#: Tools whose success means a file on disk changed and a verify+commit is due.
+_COMMIT_TOOLS = _WRITE_TOOLS | {"exec_notebook"}
+#: Tools that leave a path read (and, for exec_notebook, rewritten).
+_READ_TOOLS = {"read_file", "read_notebook"}
 
 # Files that must never be committed on their own (state, not code).
 _PLAN_PREFIX = ".coagent/plans/"
@@ -366,7 +370,7 @@ class coAgent:
             else:
                 self.budget.record_success()
 
-            if tool in _WRITE_TOOLS and executed.ok:
+            if tool in _COMMIT_TOOLS and executed.ok:
                 self._verify_and_commit(result)
 
     def _phase_report(self, result: AgentResult) -> str:
@@ -409,6 +413,7 @@ class coAgent:
             tool_schemas=schemas,
             next_step=self.budget.steps + 1,
             failures=self._last_failure,
+            retrieved=self._retrieve(),
         )
         messages = [Message("system", prompts.SYSTEM_CORE), Message("user", prompt)]
 
@@ -480,7 +485,14 @@ class coAgent:
                 self.state and self.state.plan.write(
                     self.state.plan.title, self.state.plan.steps
                 )
-        elif tool == "read_file" and result.ok:
+        elif tool == "exec_notebook" and result.ok:
+            # Execution rewrites the notebook in place with outputs, so it is a
+            # write as well as a check: the file must be staged and committed.
+            path = str(args.get("path", ""))
+            if path:
+                self.state and self.state.note_written(path)
+                self.state and self.state.plan.tick_matching(path)
+        elif tool in _READ_TOOLS and result.ok:
             path = str(args.get("path", ""))
             if path:
                 self.state and self.state.note_read(path)
@@ -755,8 +767,29 @@ class coAgent:
         the repo map's §5.1 slot; a repo with no Python degrades to a note
         rather than an empty prompt.
         """
+        mapper = self._mapper()
+        if mapper is None:
+            return "(repo map unavailable; explore with list_dir and grep)"
+        try:
+            return mapper.render()
+        except Exception as exc:  # noqa: BLE001 - a map must never end a session
+            self._emit("repo_map_degraded", {"error": str(exc)})
+            return "(repo map unavailable; explore with list_dir and grep)"
+
+    def _mapper(self):  # noqa: ANN202 - RepoMap, imported lazily
+        """Build the repo map once per session and reuse it.
+
+        Parsing is the only real cost in the context layer, and the ACT loop asks
+        for it every turn. The map is invalidated when a file is written, since
+        that is the only thing that can change a signature.
+        """
         assert self.state is not None
         from ..context.repo_map import RepoMap, RepoMapConfig
+
+        written = frozenset(self.state.files_written)
+        cached = getattr(self, "_map_cache", None)
+        if cached is not None and cached[0] == written:
+            return cached[1]
 
         touched = set(self.state.files_written) | set(self.state.files_read)
         mapper = RepoMap(
@@ -768,11 +801,37 @@ class coAgent:
                 max_files=self.cfg.context.max_files,
             ),
         )
+        self._map_cache = (written, mapper)
+        return mapper
+
+    def _retrieve(self) -> str:
+        """BM25 excerpts for the current plan step (DESIGN §5.3).
+
+        The query is the task plus the first unchecked plan item, because that is
+        what the model is about to act on — retrieving against the whole task on
+        every step would return the same five chunks for 40 turns. Files already
+        read are excluded so the excerpt slot only ever shows new code.
+        """
+        assert self.state is not None
+        mapper = self._mapper()
+        if mapper is None:
+            return ""
         try:
-            return mapper.render()
-        except Exception as exc:  # noqa: BLE001 - a map must never end a session
-            self._emit("repo_map_degraded", {"error": str(exc)})
-            return "(repo map unavailable; explore with list_dir and grep)"
+            from ..context.retrieval import RetrievalConfig, Retriever
+
+            query = self.state.task
+            pending = next((s for s in self.state.plan.steps if not s.done), None)
+            if pending is not None:
+                query = f"{query} {pending.text}"
+
+            retriever = Retriever(
+                mapper,
+                config=RetrievalConfig(max_tokens=self.cfg.context.retrieved_tokens),
+            )
+            return retriever.render(query, in_context=set(self.state.files_read))
+        except Exception as exc:  # noqa: BLE001 - retrieval is an optimisation
+            self._emit("retrieval_degraded", {"error": str(exc)})
+            return ""
 
     def _approve(self, request: ApprovalRequest) -> bool:
         if self.auto:
