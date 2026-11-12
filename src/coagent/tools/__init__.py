@@ -10,8 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..config import Config
+from ..context.artifacts import ArtifactStore
 from ..safety.denylist import DEFAULT_DENIED
 from ..safety.policy import Policy, SafetyClass
+from .artifacts import DisplayArtifactTool, SaveArtifactTool
 from .base import ArgSpec, BaseTool, ToolError, ToolRegistry, ToolResult, ToolSchemaError
 from .fs import (
     EditFileTool,
@@ -28,6 +30,7 @@ from .shell import ExecConfig, RunPythonTool, RunShellTool
 
 __all__ = [
     "ArgSpec",
+    "ArtifactStore",
     "BaseTool",
     "ExecConfig",
     "FileSession",
@@ -46,9 +49,13 @@ __all__ = [
 PHASE_SAFETY: dict[str, frozenset[SafetyClass]] = {
     "survey": frozenset({SafetyClass.READ}),
     "plan": frozenset(),
-    "act": frozenset({SafetyClass.READ, SafetyClass.WRITE, SafetyClass.EXEC, SafetyClass.VCS}),
-    "verify": frozenset({SafetyClass.READ, SafetyClass.EXEC}),
-    "report": frozenset({SafetyClass.READ}),
+    "act": frozenset(
+        {SafetyClass.READ, SafetyClass.WRITE, SafetyClass.EXEC, SafetyClass.VCS, SafetyClass.UI}
+    ),
+    # VERIFY may render a plot it just produced: that is how "the cell ran"
+    # becomes something the user can see (FR-UX-4), and it writes nothing new.
+    "verify": frozenset({SafetyClass.READ, SafetyClass.EXEC, SafetyClass.UI}),
+    "report": frozenset({SafetyClass.READ, SafetyClass.UI}),
 }
 
 
@@ -98,13 +105,27 @@ def build_registry(
     *,
     phase: str = Phase.ACT,
     policy: Policy | None = None,
+    session: FileSession | None = None,
 ) -> ToolRegistry:
-    """Every tool this phase may use, already filtered by safety class."""
+    """Every tool this phase may use, already filtered by safety class.
+
+    ``session`` is shared across phases when the caller has one, because
+    read-before-write and the artifact store are per-*session* state, not
+    per-phase: SURVEY reading a file must satisfy ACT's edit guard.
+    """
     root = Path(repo_root)
-    policy = policy or build_policy(root, cfg)
-    session = FileSession(repo_root=root, policy=policy)
+    policy = policy or (session.policy if session is not None else build_policy(root, cfg))
+    if session is None:
+        session = FileSession(repo_root=root, policy=policy)
     exec_cfg = build_exec_config(root, cfg)
     session.exec_cfg = exec_cfg
+    if session.artifact_store is None:
+        session.artifact_store = ArtifactStore(
+            root,
+            getattr(session, "run_id", "") or "run",
+            commit_under_mb=cfg.artifacts.commit_under_mb,
+            drive_dir=cfg.artifacts.drive_dir,
+        )
 
     all_tools: list[BaseTool] = [
         ListDirTool(session),
@@ -117,6 +138,8 @@ def build_registry(
         ReadNotebookTool(session),
         EditNotebookTool(session),
         ExecNotebookTool(session),
+        SaveArtifactTool(session),
+        DisplayArtifactTool(session),
         RunShellTool(exec_cfg, policy),
         RunPythonTool(exec_cfg, policy),
     ]

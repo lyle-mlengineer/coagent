@@ -258,9 +258,57 @@ quest.
   tools, and only ACT may edit. `exec_notebook` counts as a write for commit
   purposes, since it rewrites the notebook in place with outputs.
 
+### Artifacts (`coagent.context.artifacts`, `coagent.tools.artifacts`)
+
+The output of a data task is often a plot or a CSV, not a source file, and "done"
+means the figure saved and visible (PRD US-3, G5). This is that pipeline.
+
+- `ArtifactStore` applies the §3.5 size policy in code, not by convention:
+  under `artifacts.commit_under_mb` goes to `artifacts/<run-id>/` and is
+  committed; over it goes to Drive keyed by sha256 and only a pointer is
+  recorded; over 2 GB is never copied at all. **AT-7 is a test**: a 20 MB file
+  produces no bytes in the tree, only a manifest entry.
+- `artifacts/<run-id>/manifest.json` records
+  `{path, sha256, bytes, store, created_by_step}` per entry, sorted by path, and
+  replaces an entry on re-run rather than duplicating it — so re-running a cell
+  does not make the manifest describe a file that no longer exists.
+- Drive is optional and detected, never required (FR-BOOT-4). With no mount an
+  over-cap artifact is **not** silently dropped and not forced into git: it
+  becomes an honest pointer whose note says to mount Drive or raise the cap on
+  purpose. That is the graceful degradation the PRD asks for.
+- Artifact names are untrusted input from cell ids and model arguments, so they
+  are sanitised into a single path segment: `../../etc/passwd` becomes
+  `passwd.txt`, and a missing extension is inferred from the MIME type.
+- `save_artifact` — stores an existing file by `source` or inline `text`.
+  It refuses to invent content: an agent that can fabricate a plot it never drew
+  is worse than one that reports the cell produced nothing. Empty files are
+  rejected as a failed job, not saved as an artifact.
+- `display_artifact` — renders image/HTML/text inline (FR-UX-4) through an
+  optional injected callback, so the notebook UI stays out of the tool layer.
+  Headless (CLI, tests) it references the file instead; a renderer that raises is
+  reported and never fails the step. With no path it renders the manifest.
+- Notebook integration: `exec_notebook` now stores displayed images and HTML
+  automatically, named from the cell id, so re-running replaces the figure
+  instead of piling up `output-1.png`, `output-2.png`. Cell streams are not
+  artifacts — they are the tail, not the product.
+- `save_artifact` joins the commit set, so the artifact and its manifest ride in
+  the same commit that produced them, and the `Coagent-Artifacts` trailer names
+  only bytes actually in that commit. A Drive pointer is never claimed as a path.
+- `Coagent-Artifacts` is now populated end-to-end: `state.artifacts` ← store ←
+  the `save_artifact` / `exec_notebook` step, and the manifest is written even
+  when every artifact went to Drive or the run stopped early.
+- `resume` reads `artifacts/<run>/manifest.json` from git and names the artifacts
+  in the briefing, because a fresh VM has the files but no memory of them
+  (§3.6). A malformed manifest is ignored rather than blocking a resume.
+- The loop now shares one `FileSession` and one `ArtifactStore` across phases, so
+  a SURVEY read satisfies ACT's read-before-write guard and artifacts accumulate
+  for the whole session.
+- `SafetyClass.UI` is now reachable: ACT, VERIFY, and REPORT may render an
+  artifact; SURVEY and PLAN may not.
+
 ### Tests
 
-346 unit and integration tests, CPU-only — no GPU and no network required.
+387 unit and integration tests, CPU-only — no GPU and no network required.
 Includes end-to-end runs on a real git repository: a scripted model drives
 SURVEY → PLAN → ACT → VERIFY → commit with trailers, and separate tests prove
 the dirty-tree refusal, plan rejection before any write, honest verify trailers,

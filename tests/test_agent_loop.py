@@ -283,3 +283,60 @@ def test_notebook_edit_commits_through_the_loop(repo: Path) -> None:
     assert "print(42)" in "".join(nb.cells[0]["source"])
     # The commit must be on the session branch, never on main.
     assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() != "main"
+
+
+ARTIFACT_PLAN = "# Save a figure\n- [ ] produce the figure\n- [ ] save it as an artifact\n- [ ] run the checks"
+
+
+def test_artifact_lands_in_the_commit_trailer(repo: Path) -> None:
+    """US-3 end-to-end: a saved artifact is committed and named in the trailer."""
+    (repo / "fig.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "figure fixture")
+
+    script = [
+        "The task mentions fig.png.",
+        ARTIFACT_PLAN,
+        '```json\n{"tool": "save_artifact", "args": {"name": "fig.png", '
+        '"source": "fig.png", "mime": "image/png"}}\n```',
+        "done",
+        "done",
+    ]
+    agent = _agent(repo, script)
+    result = agent.run("save the figure as an artifact")
+    agent.close()
+
+    assert result.artifacts, "the run should report an artifact"
+    assert any("fig.png" in a for a in result.artifacts)
+    assert result.commits >= 1
+
+    # The manifest is committed, and the trailer names the artifact.
+    body = _git(repo, "log", "-1", "--format=%B", result.branch)
+    assert "Coagent-Artifacts:" in body
+    trailer = body.split("Coagent-Artifacts:")[1].splitlines()[0]
+    assert "fig.png" in trailer
+    tracked = _git(repo, "ls-files", "artifacts").splitlines()
+    assert any(t.endswith("manifest.json") for t in tracked)
+
+
+def test_a_large_artifact_never_reaches_git(repo: Path) -> None:
+    """AT-7 through the loop: 20 MB stays out of the commit entirely."""
+    (repo / "huge.bin").write_bytes(b"\x00" * (20 * 1024 * 1024))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "big fixture")
+
+    script = [
+        "notes",
+        "# Save the big file\n- [ ] save it\n- [ ] run the checks",
+        '```json\n{"tool": "save_artifact", "args": {"name": "huge.png", '
+        '"source": "huge.bin", "mime": "image/png"}}\n```',
+        "done",
+        "done",
+    ]
+    agent = _agent(repo, script)
+    result = agent.run("save the large file")
+    agent.close()
+
+    tracked = _git(repo, "ls-files", "artifacts").splitlines()
+    assert not any("huge.png" in t for t in tracked), "a 20 MB file must not be committed"
+    assert not any("huge.png" in a for a in result.artifacts), "the trailer must not claim it"

@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import Config, load_config
+from ..context.artifacts import ArtifactStore
 from ..gitx.commit import CommitMeta
 from ..gitx.durable import SyncResult
 from ..gitx.git import GitError
@@ -41,6 +42,7 @@ from ..safety.policy import RiskClass, SafetyClass, Verdict
 from ..safety.redact import Redactor
 from ..tools import Phase, build_policy, build_registry
 from ..tools.base import ToolError, ToolRegistry, ToolResult, ToolSchemaError
+from ..tools.fs import FileSession
 from . import prompts
 from .budget import Budget, BudgetExhausted, BudgetLimits, LoopDetector, LoopVerdict
 from .state import PlanFile, SessionState, slugify
@@ -102,7 +104,10 @@ class AgentResult:
 _WRITE_TOOLS = {"edit_file", "write_file", "edit_notebook"}
 _EXEC_TOOLS = {"run_shell", "run_python"}
 #: Tools whose success means a file on disk changed and a verify+commit is due.
-_COMMIT_TOOLS = _WRITE_TOOLS | {"exec_notebook"}
+#: `save_artifact` belongs here because the manifest and any committed artifact
+#: must ride in the same commit that produced them (FR-GIT-10); it is not in
+#: _WRITE_TOOLS because it does not edit code or tick a plan item.
+_COMMIT_TOOLS = _WRITE_TOOLS | {"exec_notebook", "save_artifact"}
 #: Tools that leave a path read (and, for exec_notebook, rewritten).
 _READ_TOOLS = {"read_file", "read_notebook"}
 
@@ -126,6 +131,7 @@ class coAgent:
         token: str | None = None,
         approver: Approver | None = None,
         on_event: Callable[[str, dict[str, Any]], None] | None = None,
+        renderer: Callable[[str, str, str], None] | None = None,
         force: bool = False,
     ) -> None:
         self.cfg = config or load_config(start=repo)
@@ -135,6 +141,9 @@ class coAgent:
         self.token = token
         self.approver = approver
         self.on_event = on_event or (lambda _kind, _data: None)
+        # Optional notebook renderer for `display_artifact`. `None` is headless:
+        # the artifact is still saved and referenced, just not drawn (FR-UX-4).
+        self.renderer = renderer
         self.redactor = Redactor([token] if token else [])
 
         if backend is None:
@@ -159,8 +168,24 @@ class coAgent:
         self.policy = build_policy(
             self.repo_path, self.cfg, interactive=interactive and not auto
         )
+        # One FileSession and one ArtifactStore for the whole session. Phases get
+        # fresh registries but share these, because read-before-write and the
+        # artifact manifest are session state, not phase state.
+        self.tool_session = FileSession(repo_root=self.repo_path, policy=self.policy)
+        self.artifacts = ArtifactStore(
+            self.repo_path,
+            self.session.session_id,
+            commit_under_mb=self.cfg.artifacts.commit_under_mb,
+            drive_dir=self.cfg.artifacts.drive_dir,
+        )
+        self.tool_session.artifact_store = self.artifacts
+        self.tool_session.render = self.renderer
         self.registry: ToolRegistry = build_registry(
-            self.repo_path, self.cfg, phase=Phase.ACT, policy=self.policy
+            self.repo_path,
+            self.cfg,
+            phase=Phase.ACT,
+            policy=self.policy,
+            session=self.tool_session,
         )
         self.log = SessionLog(
             self.repo_path, self.session.session_id, redactor=self.redactor
@@ -232,6 +257,10 @@ class coAgent:
             result.blocked_reason = "interrupted by the user"
         finally:
             self._final_checkpoint(result)
+            # The manifest is written even if every artifact went to Drive or the
+            # run stopped early: the report is the only place the user learns
+            # what was produced (FR-AGT-8 / US-3).
+            self._persist_manifest()
             result.steps = self.budget.steps
             result.commits = self.budget.commits
             result.files_changed = sorted(self.state.files_written) if self.state else []
@@ -264,7 +293,13 @@ class coAgent:
     def _phase_survey(self) -> str:
         """Read-only exploration. Returns notes for the PLAN prompt."""
         assert self.state is not None
-        registry = build_registry(self.repo_path, self.cfg, phase=Phase.SURVEY, policy=self.policy)
+        registry = build_registry(
+            self.repo_path,
+            self.cfg,
+            phase=Phase.SURVEY,
+            policy=self.policy,
+            session=self.tool_session,
+        )
         repo_map = self._repo_map()
         prompt = prompts.survey_prompt(
             task=self.state.task,
@@ -485,6 +520,11 @@ class coAgent:
                 self.state and self.state.plan.write(
                     self.state.plan.title, self.state.plan.steps
                 )
+        elif tool == "save_artifact" and result.ok:
+            # The store already wrote the manifest; the loop records which paths
+            # this run owns so the `Coagent-Artifacts` trailer and the report can
+            # name them (FR-GIT-10).
+            self._record_artifacts()
         elif tool == "exec_notebook" and result.ok:
             # Execution rewrites the notebook in place with outputs, so it is a
             # write as well as a check: the file must be staged and committed.
@@ -603,6 +643,9 @@ class coAgent:
             # Nothing on disk changed, so there is no step to record.
             return
 
+        # An artifact saved this step must be in the commit it is attributed to.
+        self._record_artifacts()
+
         # Stage the work before committing. `git commit` does not stage for you:
         # without this the commit fails with a bare exit 1 and empty stderr, and
         # the step is silently lost.
@@ -685,6 +728,30 @@ class coAgent:
             self._emit("final_checkpoint_failed", {"error": str(exc)})
 
     # ---------------------------------------------------------------- helpers
+
+    def _record_artifacts(self) -> None:
+        """Copy the store's committed paths onto the session state.
+
+        `state.artifacts` feeds the `Coagent-Artifacts` trailer and the final
+        report. Only paths in *this* commit are named: a Drive pointer is not a
+        file in the tree, and a trailer that claims otherwise is a lie.
+        """
+        if self.state is None:
+            return
+        self.state.artifacts = self.artifacts.committed_paths()
+
+    def _persist_manifest(self) -> None:
+        """Touch the manifest so it exists even when nothing was committed.
+
+        A run whose artifacts all went to Drive still owes the user a manifest;
+        writing it here means the report and a later `git add` both find it.
+        """
+        try:
+            self.artifacts.flush()
+        except Exception as exc:  # noqa: BLE001 - a manifest must not end a session
+            self._emit("artifact_manifest_degraded", {"error": str(exc)})
+            return
+        self._record_artifacts()
 
     def _generate_text(
         self,

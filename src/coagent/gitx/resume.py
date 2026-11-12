@@ -46,6 +46,9 @@ class Briefing:
     open_items: list[str] = field(default_factory=list)
     recent: list[dict] = field(default_factory=list)
     dirty_paths: list[str] = field(default_factory=list)
+    #: Committed artifacts from `artifacts/<run>/manifest.json` (§3.5). A resumed
+    #: VM has the files in git but no memory of them, so the briefing names them.
+    artifacts: list[str] = field(default_factory=list)
 
     @property
     def next_step(self) -> int:
@@ -77,6 +80,10 @@ class Briefing:
             lines.append(f"plan progress: {done}/{len(self.plan_items)}")
         for item in self.open_items[:8]:
             lines.append(f"  [ ] {item}")
+        if self.artifacts:
+            shown = ", ".join(self.artifacts[:5])
+            more = f" (+{len(self.artifacts) - 5} more)" if len(self.artifacts) > 5 else ""
+            lines.append(f"artifacts: {shown}{more}")
         if self.recent:
             failures = [r for r in self.recent if not r.get("ok", True)]
             if failures:
@@ -161,8 +168,32 @@ def build_briefing(repo: GitRepo, session_id: str, branch: str) -> Briefing:
         briefing.open_items = [item.text for item in briefing.plan_items if not item.done]
 
     briefing.recent = read_last_log_records(root / ".coagent" / "sessions" / f"{session_id}.jsonl")
+    briefing.artifacts = read_artifact_manifest(root, session_id)
 
     if repo.is_dirty():
         briefing.dirty_paths = repo.changed_paths()
 
     return briefing
+
+
+def read_artifact_manifest(root: Path, session_id: str) -> list[str]:
+    """Committed artifact paths for a session, read straight from git's copy.
+
+    Deliberately tolerant: a missing or malformed manifest is not a reason to
+    refuse a resume. The briefing is best-effort, and the trailers already carry
+    the artifact list for the last commit.
+    """
+    import json
+
+    manifest = root / "artifacts" / session_id / "manifest.json"
+    if not manifest.is_file():
+        return []
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    paths: list[str] = []
+    for entry in data.get("artifacts", []):
+        if isinstance(entry, dict) and entry.get("path"):
+            paths.append(str(entry["path"]))
+    return paths

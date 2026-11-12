@@ -55,6 +55,11 @@ class FileSession:
     #: Set by `build_registry`; the notebook exec tool needs the run envelope
     #: (timeouts, scrubbed env, scratch dir) that `ExecConfig` carries.
     exec_cfg: Any = None
+    #: Set by `build_registry`: the shared store that applies the §3.5 size policy.
+    artifact_store: Any = None
+    #: Optional `(kind, payload, mime) -> None` renderer, injected by the notebook
+    #: UI. `None` means headless: artifacts are referenced, never drawn.
+    render: Any = None
 
     def __post_init__(self) -> None:
         self.repo_root = Path(self.repo_root).resolve()

@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..context.artifacts import ArtifactError
 from ..safety.policy import Verdict
 from .base import ArgSpec, SafetyClass, ToolError, ToolResult
 from .fs import _PolicyTool
@@ -460,6 +461,17 @@ def _cap_line(line: str, limit: int = MAX_LINE_CHARS) -> str:
     return line if len(line) <= limit else line[: limit - 20] + " …[truncated]"
 
 
+def _decode_base64(text: str) -> bytes | None:
+    """Decode an image payload, tolerating the newlines nbformat keeps."""
+    import base64
+    import binascii
+
+    try:
+        return base64.b64decode(text, validate=False)
+    except (binascii.Error, ValueError):
+        return None
+
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
@@ -708,6 +720,14 @@ class ExecNotebookTool(_PolicyTool):
             body += f"\n\nnbconvert output (tail):\n{_tail(outcome.output, 12)}"
 
         images = meta.pop("outputs", [])
+        # Cell outputs are artifacts (FR-CTX-4). Saving them here, rather than
+        # asking the model to call save_artifact again, is what makes "the cell
+        # ran and the figure saved" one action instead of two — and the model is
+        # not in the loop for bytes it never sees.
+        saved = self._store_outputs(images, doc.rel)
+        if saved:
+            body += "\n\nartifacts: " + ", ".join(r.path for r in saved)
+
         return ToolResult(
             ok=ok and not timed_out,
             content=body,
@@ -718,8 +738,49 @@ class ExecNotebookTool(_PolicyTool):
                 "timed_out": timed_out,
                 "returncode": outcome.returncode,
                 "outputs": images,
+                "artifacts": [r.path for r in saved],
             },
         )
+
+    def _store_outputs(self, outputs: list[Any], notebook_rel: str) -> list[Any]:
+        """Store images and HTML from a run; streams are not artifacts.
+
+        A stream output is the cell's own logging and belongs in the tail; a
+        figure or a rendered table is a product. Each is saved under a name
+        derived from the cell id, so re-running replaces the previous file
+        instead of piling up `output-1.png`, `output-2.png`, …
+        """
+        store = getattr(self.session, "artifact_store", None)
+        if store is None or not outputs:
+            return []
+        stem = Path(notebook_rel).stem or "notebook"
+        saved = []
+        for output in outputs:
+            if output.kind not in {"image", "html"}:
+                continue
+            ext = ".png" if output.mime == "image/png" else (
+                ".jpg" if output.mime == "image/jpeg" else ".html"
+            )
+            if output.kind == "image":
+                data = _decode_base64(output.data)
+                if data is None:
+                    continue
+            else:
+                data = output.data.encode("utf-8", errors="replace")
+            try:
+                saved.append(
+                    store.save_bytes(
+                        data,
+                        f"{stem}-{output.cell_id}{ext}",
+                        mime=output.mime or "image/png",
+                        subdir="notebooks",
+                    )
+                )
+            except ArtifactError:
+                # A failed artifact save must not fail the execution: the cell
+                # ran, and that is the fact the verify gate needs.
+                continue
+        return saved
 
     def exec_cfg_notebook_timeout(self) -> int:
         return int(getattr(self.exec_cfg, "notebook_timeout_s", 300) or 300)
