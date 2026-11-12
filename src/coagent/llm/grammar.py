@@ -114,9 +114,61 @@ def extract_json_candidates(text: str) -> list[str]:
     return out
 
 
+
+def _escape_controls(text: str) -> str:
+    r"""Escape literal control characters that appear inside JSON strings.
+
+    A small model writing code into a ``replace`` field emits a real newline
+    instead of ``\n``, which makes the block invalid JSON. That is the most
+    common envelope failure and it is always recoverable: inside a JSON string
+    a raw control character is never legal.
+    """
+    mapping = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+    out = []
+    in_string = False
+    escaped = False
+    for ch in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            elif ch in mapping:
+                out.append(mapping[ch])
+                continue
+        elif ch == '"':
+            in_string = True
+        out.append(ch)
+    return "".join(out)
+
+
+def _truncated(text: str) -> bool:
+    """True when strings/braces are unbalanced, i.e. the block was cut off."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for ch in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+    return depth > 0 or in_string
+
+
 def repair_json(text: str) -> str:
-    """Best-effort JSON5-ish repair for the two most common model slips."""
-    fixed = text
+    """Best-effort JSON5-ish repair for the most common model slips."""
+    fixed = _escape_controls(text)
     # Single-quoted strings → double-quoted, without touching apostrophes in prose.
     fixed = _SINGLE_QUOTE_RE.sub(lambda m: '"' + m.group(1).replace('"', '\\"') + '"', fixed)
     # Unquoted keys: {tool: "read_file"} → {"tool": "read_file"}
@@ -154,9 +206,14 @@ def parse_envelope(text: str, *, allowed_tools: set[str] | None = None) -> Envel
         )
 
     saw_json = False
+    saw_unparseable = ""
     for candidate in extract_json_candidates(text):
         value, repaired = _try_load(candidate)
         if value is None:
+            # Only a brace-bearing candidate is a real parse attempt; plain prose
+            # reaching here means the model never tried to call a tool.
+            if "{" in candidate and not saw_unparseable:
+                saw_unparseable = candidate
             continue
         saw_json = True
         if "tool" not in value:
@@ -197,6 +254,29 @@ def parse_envelope(text: str, *, allowed_tools: set[str] | None = None) -> Envel
             corrective=(
                 "Your JSON block is missing the `tool` key. Reply with exactly:\n"
                 '```json\n{"tool": "<tool name>", "args": {...}}\n```'
+            ),
+            raw=text,
+        )
+    if saw_unparseable and _truncated(saw_unparseable):
+        raise EnvelopeError(
+            "the tool call was cut off",
+            corrective=(
+                "Your last JSON block was cut off before it finished, most likely "
+                "because the output limit was reached. Keep the edit small: send a "
+                "shorter `replace` block, or split the change into two edits. Reply "
+                'with one complete fenced JSON block:\n```json\n{"tool": "<tool name>", '
+                '"args": {...}}\n```'
+            ),
+            raw=text,
+        )
+    if saw_unparseable:
+        raise EnvelopeError(
+            "the JSON was malformed",
+            corrective=(
+                "Your JSON block could not be parsed. Common causes: an unescaped "
+                "quote or backslash inside a string, a missing comma, or a trailing "
+                'comma. If you are writing code into `replace`, escape newlines as '
+                '\\n and quotes as \\". Reply with one complete fenced JSON block.'
             ),
             raw=text,
         )

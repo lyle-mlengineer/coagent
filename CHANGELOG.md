@@ -82,6 +82,43 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 - `os.getpgid`/`start_new_session` do not exist on Windows; both are guarded so
   the tool suite runs on a dev laptop while Linux keeps real process-group kills.
 
+### Agent loop (`coagent.agent`)
+
+- `prompts.py` — the five phase prompts in one auditable file. Tool results are
+  wrapped in `<observation>` and the system prompt declares them untrusted data,
+  which is the first layer of the prompt-injection defence (DESIGN §9.3).
+  PLAN's prompt states it has no tools.
+- `budget.py` — hard ceilings on steps, wall clock, tokens, GPU minutes,
+  commits, and consecutive failures. Exhaustion raises `BudgetExhausted` so the
+  run checkpoints and reports instead of burning the session (FR-AGT-5).
+  `LoopDetector` fingerprints `(tool, args)`; 3 repeats force a replan, 5 stop
+  the run (DESIGN §7.4).
+- `state.py` — `PlanFile`, the durable plan in `.coagent/plans/`, written before
+  the first edit and re-read after eviction, so memory survives both context
+  loss and VM death (FR-CTX-5). Observations are a bounded window.
+- `loop.py` — the explicit state machine SURVEY → PLAN → ACT → VERIFY →
+  CHECKPOINT → REPORT. PLAN structurally cannot act; one write or exec per
+  turn; read-before-write; verify-then-commit; `done` is a predicate over
+  passing checks and plan completion, never the model's opinion (FR-AGT-8).
+- `coagent run "<task>"` with `--auto` and `--dry-run` (scripted model, no GPU).
+- `python -m coagent` for use inside a Colab cell.
+
+### Fixed
+
+- `git commit` failed with a bare exit 1 and empty stderr because nothing was
+  staged. The loop now stages changed and new files, never `.coagent/` state.
+- Plan steps were never ticked, so no task could ever satisfy the definition of
+  done. A successful edit ticks the step naming that file, and passing checks
+  tick the step naming them.
+- `Budget.check()` used `>=`, so the Nth step raised instead of the (N+1)th.
+  Ceilings are now inclusive.
+- A final checkpoint committed failing work labelled as verified. The trailer
+  now records `failed (work in progress)`.
+- The report phase could echo a raw JSON tool envelope at the user. It is now
+  detected with the real parser and replaced with a generated summary.
+- A failed commit is no longer silent: the reason is emitted as a `commit_failed`
+  event.
+
 ### Model layer (`coagent.llm`)
 
 - `base.py` — the `LLMBackend` interface (`generate`, `count_tokens`, streaming,
@@ -90,9 +127,13 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
   `FakeBackend`, a scripted backend that makes the whole loop testable on CPU.
 - `grammar.py` — tolerant envelope extraction with a 5-step escalation ladder:
   labelled fence → bare fence → bare `{...}` (balanced-brace scan that respects
-  strings) → JSON5-ish repair (single quotes, unquoted keys, trailing commas) →
-  failure with a **corrective message** the loop feeds straight back. Never
-  raises `JSONDecodeError` at the caller.
+  strings) → JSON5-ish repair (single quotes, unquoted keys, trailing commas,
+  literal control characters inside strings) → failure with a **corrective
+  message** the loop feeds straight back. Never raises `JSONDecodeError` at the
+  caller. Failures are diagnosed individually: "cut off" (unbalanced braces,
+  with advice to send a smaller edit), "malformed" (bad escapes, missing comma),
+  and "no JSON object" (plain prose) are different problems and get different
+  advice.
 - `registry.py` — exactly two validated configurations (7B/NF4/12k and
   3B/NF4/8k fallback), and `preflight_gpu()`, which checks T4 / compute 7.5 /
   ≥14 GB VRAM and returns an actionable refusal instead of raising (PRD D1).
@@ -112,11 +153,16 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 - `OutOfMemoryLadder.exhausted` reported False after all three recovery actions;
   it now flips once the ladder is spent.
 
+- `.coagent/plans/` was missing from the runtime paths, so a second run refused
+  to start on coAgent's own plan files.
+
 ### Tests
 
-218 unit and integration tests, CPU-only — no GPU and no network required.
-Includes an integration test that drives a scripted model through envelope
-parsing, the budget check, and the real tool registry to a genuine file edit.
+256 unit and integration tests, CPU-only — no GPU and no network required.
+Includes end-to-end runs on a real git repository: a scripted model drives
+SURVEY → PLAN → ACT → VERIFY → commit with trailers, and separate tests prove
+the dirty-tree refusal, plan rejection before any write, honest verify trailers,
+and clean budget exhaustion.
 
 ## [0.1.0] - TBD
 

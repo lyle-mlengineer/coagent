@@ -198,6 +198,84 @@ def _cmd_models(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_run(args: argparse.Namespace) -> int:
+    """survey -> plan -> act -> verify -> checkpoint -> report, from the terminal."""
+    from .agent import coAgent as Agent
+
+    cfg = load_config(args.config)
+    repo = Path(args.repo or ".").resolve()
+    if not repo.is_dir():
+        print(f"coagent: {repo} is not a directory", file=sys.stderr)
+        return 1
+
+    backend = None
+    if args.dry_run:
+        # A scripted model: proves the plumbing without a GPU or a download.
+        from .llm import FakeBackend
+
+        backend = FakeBackend(_dry_run_script(args.task))
+
+    def on_event(kind: str, data: dict) -> None:
+        if kind == "tool":
+            mark = "ok  " if data.get("ok") else "FAIL"
+            print(f"  {mark} {data.get('tool')}")
+        elif kind == "plan":
+            print(f"  plan  {data.get('title')}  ({len(data.get('steps', []))} steps)")
+        elif kind == "commit":
+            print(f"  commit {str(data.get('sha'))[:8]} step {data.get('step')}")
+        elif kind == "sync":
+            print(f"  sync  {'ok' if data.get('ok') else 'warn'}: {data.get('message')}")
+        elif kind == "verify":
+            print(f"  verify {'passed' if data.get('ok') else 'failed'}")
+
+    try:
+        agent = Agent(
+            repo,
+            config=cfg,
+            backend=backend,
+            auto=args.auto or args.dry_run,
+            interactive=not args.auto,
+            token=None,
+            on_event=on_event,
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 - every refusal is a message, not a traceback
+        print(f"coagent: {exc}", file=sys.stderr)
+        return 1
+
+    print(agent.status_line())
+    try:
+        result = agent.run(args.task)
+    except KeyboardInterrupt:
+        print("coagent: interrupted", file=sys.stderr)
+        return 130
+    finally:
+        agent.close()
+
+    print()
+    print(result.render())
+    return 0 if result.done else 2
+
+
+def _dry_run_script(task: str) -> list[str]:
+    """A scripted session so `--dry-run` exercises the real loop.
+
+    Deliberately ends without a further action: the run should stop cleanly on
+    "no more actions" rather than trip the loop detector, so the output shows a
+    normal early exit rather than a failure.
+    """
+    return [
+        "Surveyed the repository map. This is a dry run, so no model is loaded.",
+        "# dry run\n"
+        "- [ ] list the repository root\n"
+        "- [ ] run the configured checks",
+        '```json\n{"tool": "list_dir", "args": {"path": "."}}\n```',
+        # FakeBackend repeats its final response, so the script must say "stop"
+        # explicitly instead of relying on the queue running dry.
+        "The dry run is complete; no further action is needed.",
+    ]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="coagent",
@@ -244,6 +322,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_models.add_argument("--config", help="path to a config.toml (default: search upward)")
     p_models.add_argument("--gpu", action="store_true", help="run the T4 preflight check")
     p_models.set_defaults(func=_cmd_models)
+
+    p_run = sub.add_parser("run", help="run one task: survey, plan, act, verify, report")
+    p_run.add_argument("task", help="what to do, in one sentence")
+    p_run.add_argument("--repo", help="repo root (default: cwd)")
+    p_run.add_argument("--config", help="path to a config.toml (default: search upward)")
+    p_run.add_argument("--auto", action="store_true", help="pre-approve the plan")
+    p_run.add_argument("--dry-run", action="store_true", help="use a scripted model (no GPU)")
+    p_run.add_argument("--force", action="store_true", help="take over a live session lock")
+    p_run.set_defaults(func=_cmd_run)
 
     return parser
 

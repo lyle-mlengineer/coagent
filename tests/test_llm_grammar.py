@@ -171,3 +171,41 @@ def test_final_answer_detection() -> None:
 def test_no_allowed_tools_accepts_any_name() -> None:
     env = parse_envelope('```json\n{"tool": "anything", "args": {}}\n```')
     assert env.tool == "anything"
+
+
+# --------------------------------------------------- repair / diagnostics
+
+
+def test_raw_newline_in_string_is_repaired() -> None:
+    """A model writing code emits a literal newline; that must still parse."""
+    raw = '```json\n{"tool": "edit_file", "args": {"path": "g.py", "replace": "a\nb"}}\n```'
+    env = parse_envelope(raw, allowed_tools={"edit_file"})
+    assert env.args["replace"] == "a\nb"
+    assert env.repaired
+
+
+def test_raw_tab_in_string_is_repaired() -> None:
+    raw = '```json\n{"tool": "edit_file", "args": {"path": "g.py", "replace": "a\tb"}}\n```'
+    assert parse_envelope(raw, allowed_tools={"edit_file"}).args["replace"] == "a\tb"
+
+
+def test_truncated_envelope_says_it_was_cut_off() -> None:
+    raw = '```json\n{"tool": "edit_file", "args": {"path": "g.py", "replace": "def hello('
+    with pytest.raises(EnvelopeError) as exc:
+        parse_envelope(raw, allowed_tools={"edit_file"})
+    assert "cut off" in str(exc.value)
+    assert "shorter" in exc.value.corrective
+
+
+def test_malformed_json_is_diagnosed_separately() -> None:
+    raw = '```json\n{"tool": "edit_file", "args": {"path": "g.py" "x"}}\n```'
+    with pytest.raises(EnvelopeError) as exc:
+        parse_envelope(raw, allowed_tools={"edit_file"})
+    assert "malformed" in str(exc.value)
+
+
+def test_prose_is_not_reported_as_malformed() -> None:
+    """Prose must not be called malformed: the model never tried to call a tool."""
+    with pytest.raises(EnvelopeError) as exc:
+        parse_envelope("I will now edit the file.")
+    assert "no JSON object" in str(exc.value)

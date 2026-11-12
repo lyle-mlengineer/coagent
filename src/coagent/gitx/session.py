@@ -43,6 +43,9 @@ COAGENT_RUNTIME_PATHS: tuple[str, ...] = (
     ".coagent/sessions/",
     ".coagent/cache/",
     ".coagent/bundles/",
+    # Plans are coAgent's own memory. Leaving them out would make every re-run
+    # refuse to start on coAgent's own leftovers.
+    ".coagent/plans/",
     ".coagent/secrets",
 )
 
