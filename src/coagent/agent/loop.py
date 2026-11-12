@@ -748,27 +748,31 @@ class coAgent:
             self.state.plan.write(self.state.task, self._fallback_plan())
 
     def _repo_map(self) -> str:
-        """Signature-only map of top-level Python files (a §5.2 stand-in for M1)."""
-        lines: list[str] = []
-        count = 0
-        for path in sorted(self.repo_path.rglob("*.py")):
-            if ".git" in path.parts or ".coagent" in path.parts:
-                continue
-            rel = path.relative_to(self.repo_path).as_posix()
-            lines.append(rel)
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            for line in text.splitlines():
-                stripped = line.strip()
-                if stripped.startswith(("def ", "class ", "async def ")):
-                    lines.append(f"  {stripped.rstrip(':')}")
-                    count += 1
-            if count > 400:
-                lines.append("  … [repo map truncated]")
-                return "\n".join(lines)
-        return "\n".join(lines) if lines else "(empty repository)"
+        """Ranked, signature-only map of the repository (DESIGN §5.2).
+
+        The task text and the files this session has already touched are fed in
+        as ranking signals so the map leads with what matters. Budget comes from
+        the repo map's §5.1 slot; a repo with no Python degrades to a note
+        rather than an empty prompt.
+        """
+        assert self.state is not None
+        from ..context.repo_map import RepoMap, RepoMapConfig
+
+        touched = set(self.state.files_written) | set(self.state.files_read)
+        mapper = RepoMap(
+            self.repo_path,
+            task=self.state.task,
+            recently_edited=touched,
+            config=RepoMapConfig(
+                max_tokens=self.cfg.context.repo_map_tokens,
+                max_files=self.cfg.context.max_files,
+            ),
+        )
+        try:
+            return mapper.render()
+        except Exception as exc:  # noqa: BLE001 - a map must never end a session
+            self._emit("repo_map_degraded", {"error": str(exc)})
+            return "(repo map unavailable; explore with list_dir and grep)"
 
     def _approve(self, request: ApprovalRequest) -> bool:
         if self.auto:

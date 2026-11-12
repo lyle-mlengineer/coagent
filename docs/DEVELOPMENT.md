@@ -42,7 +42,7 @@ src/coagent/
   templates/         config.toml shipped as package data
   agent/             loop.py, prompts.py, budget.py, state.py      (M1)
   llm/               base.py, registry.py, transformers_backend.py (M1)
-  context/           repo_map.py, retrieval.py, compressor.py       (M2)
+  context/           repo_map.py, tokens.py, retrieval.py, …         (M2; repo map done)
   tools/             base.py, fs.py, shell.py, git_tools.py, …      (M1)
   gitx/              session.py, commit.py, durable.py, resume.py   (M2)
   ui/                notebook.py, render.py                         (M1)

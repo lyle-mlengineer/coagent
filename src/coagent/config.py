@@ -135,6 +135,28 @@ class SafetyConfig:
 
 
 @dataclass(slots=True)
+class ContextConfig:
+    """Token slots for the 12k window (DESIGN §5.1).
+
+    Only the repo map slot is configurable so far; the rest of the ledger is
+    still assembled by the loop. Keeping the default equal to the design table
+    means an unconfigured repo behaves as specified.
+    """
+
+    repo_map_tokens: int = 2000
+    max_files: int = 800
+
+    def __post_init__(self) -> None:
+        if self.repo_map_tokens < 200:
+            raise ConfigError(
+                f"context.repo_map_tokens={self.repo_map_tokens} is too small to be useful; "
+                "use at least 200 (DESIGN §5.1 gives the map 2000)."
+            )
+        if self.max_files < 1:
+            raise ConfigError(f"context.max_files must be >= 1, got {self.max_files}.")
+
+
+@dataclass(slots=True)
 class UIConfig:
     mode: str = "show"
     gradio: bool = False
@@ -154,6 +176,7 @@ class Config:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     artifacts: ArtifactsConfig = field(default_factory=ArtifactsConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    context: ContextConfig = field(default_factory=ContextConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     source: Path | None = None
 
@@ -170,6 +193,7 @@ _SECTIONS: dict[str, type] = {
     "tools": ToolsConfig,
     "artifacts": ArtifactsConfig,
     "safety": SafetyConfig,
+    "context": ContextConfig,
     "ui": UIConfig,
 }
 

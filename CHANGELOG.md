@@ -156,9 +156,32 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 - `.coagent/plans/` was missing from the runtime paths, so a second run refused
   to start on coAgent's own plan files.
 
+### Context layer (`coagent.context`)
+
+- `repo_map` — signature-only repository map built for a 12k window
+  (DESIGN §5.1–5.2). Parses every source file with `ast` and falls back to
+  tree-sitter, then to line-anchored regex, so a file that will not parse
+  degrades the map instead of ending the session. Emits signatures and
+  module constants only — never bodies.
+- PageRank-lite ranking, `0.5·reference_count + 0.3·recently_edited +
+  0.2·mentioned_in_task`: a shared module outranks a leaf script, and a file
+  the task names always survives the budget. Reference counting is inbound and
+  token-set based — the naive per-symbol regex version cost 4 s on a 7k-line
+  repo, now ~0.12 s.
+- Greedy, deterministic packing into the repo map's 2000-token slot, cutting on
+  file boundaries rather than mid-signature. Vendored, generated, and
+  `__pycache__` trees are excluded; per-file signatures are capped at 40.
+- `tokens` — ~4 chars/token estimator, `fit` for budget packing, and
+  `truncate_middle` for head/tail truncation (monotone, so an "it fits" answer
+  stays true for the real tokenizer).
+- `context.repo_map_tokens` and `context.max_files` config knobs, validated with
+  a 200-token floor.
+- The agent loop's `_repo_map` stand-in is replaced: SURVEY now receives the
+  ranked map, seeded with the task text and the files the session has touched.
+
 ### Tests
 
-256 unit and integration tests, CPU-only — no GPU and no network required.
+282 unit and integration tests, CPU-only — no GPU and no network required.
 Includes end-to-end runs on a real git repository: a scripted model drives
 SURVEY → PLAN → ACT → VERIFY → commit with trailers, and separate tests prove
 the dirty-tree refusal, plan rejection before any write, honest verify trailers,
