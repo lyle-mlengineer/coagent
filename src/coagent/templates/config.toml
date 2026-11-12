@@ -1,0 +1,104 @@
+# coAgent configuration — committed to your repo so a session is reproducible
+# on any VM. See DESIGN.md §11 and PRD.md Appendix A.
+#
+# Bump `schema_version` only when this file's structure changes incompatibly;
+# coAgent refuses to run against a newer schema than it understands.
+
+schema_version = 1
+
+[model]
+# The only validated configuration on a free T4 (PRD FR-MDL-1).
+name = "Qwen/Qwen2.5-Coder-7B-Instruct"
+# nf4 = bitsandbytes 4-bit; compute dtype is fp16 because T4 (SM 7.5) has no bf16.
+quant = "nf4"
+# Hard cap, counted with the model's own tokenizer (PRD D2 / FR-MDL-2).
+max_context = 12288
+max_new_tokens = 1024
+# Sampling: deterministic for edits, warmer for planning (FR-MDL-4).
+temperature_edit = 0.2
+temperature_plan = 0.7
+top_p = 0.95
+# Per-session seed, logged for reproducibility. 0 = pick a random seed and log it.
+seed = 0
+# Optional outlines-envelope constrained decoding (DESIGN §4.3). Off by default;
+# the tolerant-parse path must stay functional when this is disabled.
+constrained = false
+# Fallback used only after the OOM ladder fails to fit the default model (PRD D6).
+fallback_name = "Qwen/Qwen2.5-Coder-3B-Instruct"
+fallback_max_context = 8192
+
+[verify]
+# Run with CUDA_VISIBLE_DEVICES="" so tests never fight the model for VRAM (PRD D4).
+commands = ["ruff check .", "pytest -q"]
+# Run at most once per task, after the model yields the GPU (DESIGN §4.6).
+gpu_commands = []
+timeout_s = 300
+# Free VRAM required before a gpu_commands step is allowed to start.
+vram_reserve_mb = 1024
+# A feature without a test is not done (FR-VER-5).
+require_tests = true
+# Failures fed back to the model are reduced to names + traceback tails (FR-VER-3).
+feedback_max_tokens = 1500
+
+[git]
+author_name = "coAgent"
+author_email = "coagent@users.noreply.github.com"
+# Only these remotes may receive a push. Add "durable" when origin is public
+# so WIP history does not leak (DESIGN §3.1, PRD R7).
+remotes = ["origin"]
+clone_depth = 1
+# Ref namespace coAgent is allowed to push. main is never writable (FR-GIT-8).
+push_ref_prefix = "refs/heads/coagent/"
+
+[durability]
+# push = push the session branch; bundle = write git bundles to Drive (offline).
+mode = "push"
+remote = "origin"
+# Checkpoint at least this often while the tree is dirty (FR-REL-1).
+heartbeat_s = 180
+
+[agent]
+max_steps = 60
+max_wall_s = 2700
+max_tokens = 200000
+max_gpu_min = 40
+max_commits = 40
+max_consecutive_failures = 3
+# Loop detection thresholds on the state fingerprint (FR-AGT-6).
+replan_after_repeats = 3
+stop_after_repeats = 5
+
+[tools]
+# Repo root is always readable. Add e.g. "/content/data" to extend the read jail.
+allow_read = []
+# Combined stdout+stderr cap before head/tail truncation.
+max_output_bytes = 65536
+shell_timeout_s = 120
+notebook_timeout_s = 300
+
+[artifacts]
+commit_under_mb = 5
+store = "drive"
+drive_dir = "coagent/artifacts"
+
+[safety]
+# Risky action classes that need a human click in interactive mode.
+# In non-interactive mode these flip to deny (DESIGN §9.1).
+require_approval = ["network", "install", "delete", "write_outside_repo"]
+# Evaluated before allow rules, so force-push stays denied even on coagent/*.
+deny = [
+  "git push --force",
+  "git push -f",
+  "git push origin main",
+  "git reset --hard",
+  "git branch -D",
+  "rm -rf /",
+  "chmod -R 777 /",
+]
+
+[ui]
+# show = render the notebook chat UI; headless = no widgets (CLI/tests).
+mode = "show"
+# Optional Gradio surface behind the Colab port proxy (P1, never required).
+gradio = false
+gradio_port = 7860

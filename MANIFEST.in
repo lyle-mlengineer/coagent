@@ -1,0 +1,11 @@
+include README.md
+include LICENSE
+include CHANGELOG.md
+include PRD.md
+include DESIGN.md
+recursive-include docs *.md
+recursive-include notebooks *.ipynb
+recursive-include src/coagent/templates *.toml *.md
+recursive-include tests *.py
+include src/coagent/py.typed
+global-exclude __pycache__ *.py[cod] .DS_Store

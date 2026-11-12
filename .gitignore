@@ -218,3 +218,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# coAgent — committed on purpose: .coagent/config.toml, plans/, sessions/
+# Runtime state that must never be committed:
+.coagent/tmp/
+.coagent/lock.json
+.coagent/secrets*
+.coagent/bundles/
+.coagent/cache/

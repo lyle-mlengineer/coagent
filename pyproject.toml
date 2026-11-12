@@ -1,0 +1,108 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coagent"
+version = "0.1.0"
+description = "A private AI coding agent for the free Google Colab T4: local 7B model, git-backed memory, reviewable branches."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Lyle Okoth" }]
+keywords = ["coding-agent", "colab", "llm", "transformers", "git", "qwen"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Code Generators",
+]
+dependencies = [
+  # Core runtime: config, loop, tools, git plumbing. Deliberately light so that
+  # `pip install coagent` on a laptop is fast and the test suite runs on CPU.
+  "tomli>=2.0.1; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+# The GPU stack. Pin these; they are installed in Colab, not on a laptop.
+llm = [
+  "torch>=2.4,<2.7",
+  "transformers>=4.45,<4.49",
+  "accelerate>=0.34,<1.2",
+  "bitsandbytes>=0.43,<0.47",
+  "safetensors>=0.4.3",
+]
+# Notebook surface + notebook tools.
+ui = [
+  "ipywidgets>=8.1",
+  "ipython>=8.18",
+  "nbformat>=5.10",
+  "nbconvert>=7.16",
+]
+context = [
+  "tree-sitter>=0.23,<0.25",
+  "tree-sitter-python>=0.23",
+  "tree-sitter-javascript>=0.23",
+  "json5>=0.9.25",
+]
+dev = [
+  "pytest>=8.2",
+  "pytest-cov>=5.0",
+  "ruff>=0.6",
+]
+colab = ["coagent[llm,ui,context]"]
+all = ["coagent[llm,ui,context,dev]"]
+
+[project.urls]
+Homepage = "https://github.com/lyle-mlengineer/coagent"
+Documentation = "https://github.com/lyle-mlengineer/coagent/blob/main/README.md"
+Source = "https://github.com/lyle-mlengineer/coagent"
+Issues = "https://github.com/lyle-mlengineer/coagent/issues"
+Changelog = "https://github.com/lyle-mlengineer/coagent/blob/main/CHANGELOG.md"
+
+[project.scripts]
+coagent = "coagent.cli:main"
+
+[project.entry-points."coagent.backends"]
+transformers = "coagent.llm.transformers_backend:TransformersBackend"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["coagent*"]
+
+[tool.setuptools.package-data]
+coagent = ["py.typed", "templates/*.toml", "templates/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+  "gpu: requires a CUDA device (skipped by default)",
+  "slow: long-running test",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.coverage.run]
+source = ["coagent"]
+branch = true
