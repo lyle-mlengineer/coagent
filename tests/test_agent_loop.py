@@ -239,3 +239,47 @@ def test_verification_ticks_the_plan(repo: Path) -> None:
     agent._tick_verification_steps()
     assert plan.complete
     agent.close()
+
+
+def _write_demo_notebook(repo: Path) -> None:
+    """A notebook with no cell ids, like a file written by an older Colab."""
+    import nbformat
+    from nbformat.v4 import new_code_cell, new_notebook
+
+    nb = new_notebook(cells=[new_code_cell("x = 1\nprint(x)")])
+    for cell in nb.cells:
+        cell.pop("id", None)
+    nb.nbformat_minor = 4
+    (repo / "demo.ipynb").write_text(nbformat.writes(nb, version=4), encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "notebook")
+
+
+NOTEBOOK_PLAN = "# Fix the demo cell\n- [ ] read demo.ipynb\n- [ ] update the cell\n- [ ] run the checks"
+
+
+def test_notebook_edit_commits_through_the_loop(repo: Path) -> None:
+    """The whole journey: read by id → edit_notebook → verify → commit."""
+    pytest.importorskip("nbformat")
+    _write_demo_notebook(repo)
+    script = [
+        "The task mentions demo.ipynb.",
+        NOTEBOOK_PLAN,
+        '```json\n{"tool": "read_notebook", "args": {"path": "demo.ipynb"}}\n```',
+        '```json\n{"tool": "edit_notebook", "args": {"path": "demo.ipynb", '
+        '"mode": "replace_source", "cell_id": "c00", "source": "print(42)"}}\n```',
+        "done",
+        "done",
+    ]
+    agent = _agent(repo, script)
+    result = agent.run("change the demo notebook cell")
+    agent.close()
+
+    assert "demo.ipynb" in result.files_changed
+    assert result.commits >= 1
+    import nbformat
+
+    nb = nbformat.reads((repo / "demo.ipynb").read_text(encoding="utf-8"), as_version=4)
+    assert "print(42)" in "".join(nb.cells[0]["source"])
+    # The commit must be on the session branch, never on main.
+    assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() != "main"

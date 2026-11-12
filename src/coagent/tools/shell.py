@@ -47,6 +47,8 @@ class ExecConfig:
     repo_root: Path
     max_output_bytes: int = 65536
     timeout_s: int = 120
+    #: Notebooks run longer than a shell command (PRD FR-TOL-6: 300 s).
+    notebook_timeout_s: int = 300
     hide_gpu: bool = True
     engine_dir: Path | None = None  # .coagent/tmp — the scratch jail
 

@@ -55,6 +55,11 @@ dev = [
   "pytest>=8.2",
   "pytest-cov>=5.0",
   "ruff>=0.6",
+  # Notebook tool tests parse and execute real notebooks. ipykernel makes the
+  # exec tests run rather than skip.
+  "nbformat>=5.10",
+  "nbconvert>=7.16",
+  "ipykernel>=6.29",
 ]
 colab = ["coagent[llm,ui,context]"]
 all = ["coagent[llm,ui,context,dev]"]

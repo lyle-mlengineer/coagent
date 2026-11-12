@@ -21,6 +21,7 @@ import difflib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from ..safety.policy import Policy, Verdict
 from .base import ArgSpec, BaseTool, SafetyClass, ToolError, ToolResult
@@ -51,6 +52,9 @@ class FileSession:
     policy: Policy
     read: set[Path] = field(default_factory=set)
     written: set[Path] = field(default_factory=set)
+    #: Set by `build_registry`; the notebook exec tool needs the run envelope
+    #: (timeouts, scrubbed env, scratch dir) that `ExecConfig` carries.
+    exec_cfg: Any = None
 
     def __post_init__(self) -> None:
         self.repo_root = Path(self.repo_root).resolve()
@@ -203,6 +207,13 @@ class ReadFileTool(_PolicyTool):
             raise ToolError(f"{path} does not exist. Use list_dir to find the right path.")
         if resolved.is_dir():
             raise ToolError(f"{path} is a directory; use list_dir.")
+        if resolved.suffix.lower() == ".ipynb":
+            # JSON-notebook text is unreadable as line numbers and every byte of it
+            # is escaped source. Point at the tool that shows cells instead.
+            raise ToolError(
+                f"{path} is a notebook; use read_notebook to see its cells by id, "
+                "or edit_notebook to change one."
+            )
         try:
             raw = resolved.read_bytes()
         except OSError as exc:

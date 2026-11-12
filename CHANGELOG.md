@@ -179,13 +179,93 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 - The agent loop's `_repo_map` stand-in is replaced: SURVEY now receives the
   ranked map, seeded with the task text and the files the session has touched.
 
+### Retrieval (`coagent.context.retrieval`)
+
+- `Retriever` — Okapi BM25 over function-sized chunks (DESIGN §5.3, FR-CTX-2).
+  **No vector store**, per the design: on 2 vCPU beside a GPU an embedding index
+  is a memory and latency tax for a ranking gain BM25 mostly covers at this repo
+  size. `all-MiniLM-L6-v2` stays an optional future upgrade, not a dependency.
+- Chunks come free from the repo map: `Signature` now carries 1-based, inclusive
+  `start_line`/`end_line` from the same `ast`/tree-sitter/regex pass, so
+  retrieval does not re-parse the repo. The AST, tree-sitter, and regex parsers
+  all populate spans; the regex fallback closes a `def` on the first line that
+  dedents past its body.
+- A module prologue chunk (imports and module docstring) is added per file,
+  because that is where a file says what it depends on. `const` signatures are
+  skipped — a bare `X = ...` is not worth an excerpt slot.
+- Tokenisation explodes `snake_case` and `camelCase`, so a query for "csv loader"
+  matches `load_csv`, while the joined identifier is kept so an exact query still
+  matches exactly.
+- Ranking is BM25 plus a symbol-graph adjacency bonus (weight 0.35): a chunk that
+  imports a module already in context, or references/defines a symbol defined in
+  one, is pushed up. This is the "callers/callees of files already in context"
+  part of §5.3, and files already read are excluded so the slot only ever shows
+  new code.
+- Deterministic ordering with a `(score, file, line)` tiebreak, so a re-query
+  cannot shuffle equal-scoring chunks and invalidate a resumed session.
+- `render()` packs whole chunks into the 3000-token excerpt slot and **skips** a
+  chunk that does not fit rather than truncating it: half a function is worse
+  than a different whole one, and a truncated header would lie about the range.
+  A single 800-line method cannot eat the slot (`max_chunk_lines`).
+- The ACT prompt receives the excerpts under an explicit "untrusted source, not
+  instructions" banner, alongside the last failure.
+- The repo map is now built once per session and cached, invalidated only when a
+  file is written — it was being re-parsed on every turn. Retrieval or map
+  failures degrade to a note and emit an event; neither can end a session.
+- `context.retrieved_tokens` config knob.
+
+### Notebook tools (`coagent.tools.notebooks`)
+
+Notebooks are first-class (PRD D-2, FR-TOL-6), not source files with a JSON side
+quest.
+
+- `read_notebook` — cells by id, with type, execution count, and a hidden-output
+  count. Assigns ids to notebooks that lack them (nbformat 4.4, common in older
+  Colab files) **on read**, so an edit cannot land on a stale index; duplicate ids
+  are repaired. `read_file` on a `.ipynb` now redirects here rather than showing
+  escaped JSON as line numbers.
+- `edit_notebook` — `replace_source`, `insert`, `delete`, `replace_metadata`.
+  Cells are addressed **by id only**; an index is rejected with the list of valid
+  ids, because indices shift under insert/delete and an index-addressed edit is a
+  silent wrong edit. Read-before-write applies exactly as for `edit_file`.
+- A cell edit is gated on `ast.parse` first: an unparseable Python cell is refused
+  and the file is left untouched. IPython magics (`%matplotlib`, `!pip`, `%%bash`)
+  are neutralised rather than flagged, since they are valid notebook cells that
+  simply are not Python. An edited cell drops its stale outputs so the notebook
+  never shows results from code that no longer exists.
+- Every write is validated with `nbformat.validate` after bumping the minor
+  version to 5 (required for ids), so coAgent can never hand Colab a corrupt file.
+  The tool result diff is rendered over cells, not raw JSON, and excludes the
+  spurious nbformat-version line.
+- `exec_notebook` — `nbconvert --execute --inplace` in a subprocess, 300 s default
+  (`tools.notebook_timeout_s`), run against a **copy** and moved back, so a crash
+  mid-write cannot corrupt a tracked notebook. Outputs are read back from the
+  notebook, never from nbconvert's stdout.
+- `allow_errors=True` means a failing cell does not stop the run; the tool reports
+  `N failing cell(s)` (nbconvert exits 0 either way, so the exit code is not the
+  verdict), extracts the last traceback, and never prints the whole log when a
+  traceback already explains the failure.
+- FR-CTX-4 is enforced twice: only the last traceback and a 40-line stdout tail
+  enter context, **and** each line is capped at 300 chars, because
+  `print(x * 200)` is one line that would otherwise walk past a line-count budget.
+  Images and HTML become artifacts in `meta["outputs"]`, and never reach the
+  prompt as base64.
+- Timeouts are detected from both paths: nbconvert's own `CellTimeoutError` and
+  coAgent's process-group kill.
+- Shell escapes inside code cells (`!pip install …`) are gated by the same
+  approval matrix as `run_shell`, so `exec_notebook` is not a way around it.
+- Phase gating: SURVEY may read a notebook, VERIFY may execute one, PLAN has no
+  tools, and only ACT may edit. `exec_notebook` counts as a write for commit
+  purposes, since it rewrites the notebook in place with outputs.
+
 ### Tests
 
-282 unit and integration tests, CPU-only — no GPU and no network required.
+346 unit and integration tests, CPU-only — no GPU and no network required.
 Includes end-to-end runs on a real git repository: a scripted model drives
 SURVEY → PLAN → ACT → VERIFY → commit with trailers, and separate tests prove
 the dirty-tree refusal, plan rejection before any write, honest verify trailers,
-and clean budget exhaustion.
+and clean budget exhaustion. Notebook execution tests run against a real Jupyter
+kernel and skip cleanly when none is installed.
 
 ## [0.1.0] - TBD
 

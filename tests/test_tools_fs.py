@@ -227,7 +227,7 @@ def test_plan_phase_has_no_tools(repo: Path) -> None:
 
 def test_survey_phase_is_read_only(repo: Path) -> None:
     reg = build_registry(repo, Config(), phase=Phase.SURVEY)
-    assert set(reg.names()) == {"grep", "list_dir", "read_file"}
+    assert set(reg.names()) == {"grep", "list_dir", "read_file", "read_notebook"}
     with pytest.raises(ToolSchemaError):
         reg.call("edit_file", {"path": "README.md", "search": "a", "replace": "b"})
 

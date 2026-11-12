@@ -23,6 +23,7 @@ from .fs import (
     apply_search_replace,
     truncate_head_tail,
 )
+from .notebooks import EditNotebookTool, ExecNotebookTool, ReadNotebookTool
 from .shell import ExecConfig, RunPythonTool, RunShellTool
 
 __all__ = [
@@ -85,6 +86,7 @@ def build_exec_config(repo_root: Path, cfg: Config) -> ExecConfig:
         repo_root=Path(repo_root),
         max_output_bytes=cfg.tools.max_output_bytes,
         timeout_s=cfg.tools.shell_timeout_s,
+        notebook_timeout_s=cfg.tools.notebook_timeout_s,
         hide_gpu=True,  # PRD D4: verification is CPU-only by default
         engine_dir=Path(repo_root) / ".coagent" / "tmp",
     )
@@ -102,6 +104,7 @@ def build_registry(
     policy = policy or build_policy(root, cfg)
     session = FileSession(repo_root=root, policy=policy)
     exec_cfg = build_exec_config(root, cfg)
+    session.exec_cfg = exec_cfg
 
     all_tools: list[BaseTool] = [
         ListDirTool(session),
@@ -109,6 +112,11 @@ def build_registry(
         GrepTool(session),
         EditFileTool(session),
         WriteFileTool(session),
+        # Notebooks are first-class (PRD D-2): a plot-and-cell task is a task,
+        # not a source-file task with a JSON side quest.
+        ReadNotebookTool(session),
+        EditNotebookTool(session),
+        ExecNotebookTool(session),
         RunShellTool(exec_cfg, policy),
         RunPythonTool(exec_cfg, policy),
     ]
