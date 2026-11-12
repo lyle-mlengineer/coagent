@@ -306,9 +306,50 @@ means the figure saved and visible (PRD US-3, G5). This is that pipeline.
 - `SafetyClass.UI` is now reachable: ACT, VERIFY, and REPORT may render an
   artifact; SURVEY and PLAN may not.
 
+### Notebook UI (`coagent.ui`)
+
+The guaranteed surface (DESIGN §8.1): a chat cell that is good enough that the
+product works without Gradio. Split in two on purpose — `render.py` is the
+logic and is fully tested; `notebook.py` is plumbing.
+
+- `render.Transcript` folds the loop's event stream into rows. Tool calls become
+  collapsed `<details>` blocks — one informative line closed, args and truncated
+  output open — so a 40-step run stays readable in a phone-width pane without
+  hiding the evidence. HTML in tool output is escaped.
+- Headline rendering is per tool, because a collapsed row has to be useful on its
+  own: `edit_file src/loader.py +18 −3` counts real changed lines (diff headers
+  excluded), a read names the path and size, a shell call reports its status line.
+- `render_status_line` is FR-UX-3 in one line: model, context, GPU, session, and
+  budget. One line because it sits at the top of every repaint.
+- Unknown events are rendered, not dropped, so a new loop event appears in the
+  transcript the day it is added rather than the day this file learns of it.
+- The row buffer is bounded; old rows leave the *view* but never the session log.
+- `ChatCell` draws through `display_id` + `update` rather than
+  `clear_output(wait=True)`, which is what §8.1 asks for: the latter flickers and
+  scrolls the pane.
+- Approvals block on a `threading.Event` a button callback sets — Colab delivers
+  widget messages on another thread, so the cell can wait without freezing. The
+  wait has a timeout and **denies** on expiry: a missing human is not consent,
+  consistent with the non-interactive default (§9.1).
+- FR-UX-7 (reconnect-safe): `cell.command("approve"|"deny"|"stop"|"resume")`
+  resolves a pending decision from a plain text cell, so a lost widget cannot
+  strand a session.
+- `ChatCell.render_artifact` draws images and HTML below the transcript, keeping
+  the log on screen (FR-UX-4). A renderer that raises is reported, never fatal.
+- Everything degrades: no IPython or ipywidgets and the cell still records the
+  transcript, and `coAgent()` outside a live kernel stays headless.
+- `coAgent()` now wires the cell automatically in a notebook — `on_event`,
+  `approver`, and `renderer` — while explicit arguments win and
+  `[ui] mode = "headless"` turns it off. That makes the documented two-line
+  notebook API (§8.2) actually true.
+- `agent.show_log()` — the last N steps with the committed diff (§8.2), read from
+  the durable JSONL log so it still works after a resume.
+- The loop's `tool` event now carries `path`, so the transcript can name the file
+  in a collapsed row without re-parsing tool output.
+
 ### Tests
 
-387 unit and integration tests, CPU-only — no GPU and no network required.
+421 unit and integration tests, CPU-only — no GPU and no network required.
 Includes end-to-end runs on a real git repository: a scripted model drives
 SURVEY → PLAN → ACT → VERIFY → commit with trailers, and separate tests prove
 the dirty-tree refusal, plan rejection before any write, honest verify trailers,

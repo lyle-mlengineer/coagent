@@ -197,6 +197,9 @@ class coAgent:
         )
         self.state: SessionState | None = None
         self._cancelled = False
+        #: Set by `coagent.coAgent` when a notebook surface is attached, so
+        #: `agent.cell.command("approve")` works from another cell (FR-UX-7).
+        self.cell: Any = None
         self._pending_sync_tip: str | None = None
         # Per-instance, not class-level: two agents in one process must not
         # share a "last failure" or the loop would cross-contaminate.
@@ -284,6 +287,50 @@ class coAgent:
         from ..gitx.durable import sync_push
 
         return sync_push(self.session.repo, self.cfg.durability.remote, self.branch, policy=self.policy)
+
+    def show_log(self, *, last: int = 10) -> str:
+        """The last N steps with their diffs, as markdown (§8.2).
+
+        Reads the JSONL session log rather than the in-memory observations, so it
+        still works after a resume and shows what the durable record actually
+        says. Diffs come from git, not from the log, because that is the version
+        that was committed.
+        """
+        from ..gitx.resume import read_last_log_records
+
+        records = read_last_log_records(
+            self.repo_path / ".coagent" / "sessions" / f"{self.session_id}.jsonl",
+            count=max(1, int(last)),
+        )
+        if not records:
+            return f"no log records for session {self.session_id} yet."
+
+        lines = [f"**coAgent log** · session {self.session_id} · {len(records)} step(s)"]
+        for record in records:
+            mark = "ok" if record.get("ok", True) else "FAIL"
+            step = record.get("step", "?")
+            tool = record.get("tool") or record.get("phase", "?")
+            note = str(record.get("note") or "")
+            lines.append(f"\n`step {step}` **{tool}** — {mark}" + (f" · {note}" if note else ""))
+            error = str(record.get("error") or "")
+            if error:
+                lines.append(f"\n```\n{error[:600]}\n```")
+
+        diff = self._recent_diff()
+        if diff:
+            lines.append("\n**last change**\n")
+            lines.append(f"```diff\n{diff[:2000]}\n```")
+        return "\n".join(lines)
+
+    def _recent_diff(self, *, limit: int = 1500) -> str:
+        """The diff of the last commit on the session branch, if there is one."""
+        try:
+            out = self.session.repo.run(
+                "show", "--format=", "--no-color", "-n1", self.branch
+            )
+            return out.stdout.strip()[:limit]
+        except Exception:  # noqa: BLE001 - a missing diff is not an error worth raising
+            return ""
 
     def close(self) -> None:
         self.session.close()
@@ -555,7 +602,14 @@ class coAgent:
         )
         self._emit(
             "tool",
-            {"tool": tool, "ok": result.ok, "content": self.redactor.redact(result.content)[:2000]},
+            {
+                "tool": tool,
+                "ok": result.ok,
+                # `path` lets the transcript name the file in the collapsed row
+                # (FR-UX-1) without re-parsing the tool's own output.
+                "path": str(args.get("path", ""))[:200],
+                "content": self.redactor.redact(result.content)[:2000],
+            },
         )
         return result
 
