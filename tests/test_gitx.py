@@ -306,6 +306,34 @@ def test_clone_url_with_credentials_is_refused(tmp_path: Path) -> None:
         clone_repo("https://user:ghp_secret@github.com/a/b.git", tmp_path / "x")
 
 
+def test_clone_does_not_pollute_the_destination_before_cloning(repo_path: Path, tmp_path: Path) -> None:
+    """Regression: the askpass helper must not be written into the target.
+
+    It used to live at `<target>/.coagent/tmp/askpass.sh` and was installed before
+    `git clone` ran, so the destination was never empty and every URL clone died
+    with exit 128 "already exists and is not an empty directory".
+    """
+    from coagent.gitx.session import clone_repo
+
+    dest = tmp_path / "workspace" / "src"
+
+    clone_repo(str(repo_path), dest, depth=1)
+
+    assert (dest / ".git").is_dir()
+    # installed inside the repo only *after* the clone succeeded
+    assert (dest / ".coagent" / "tmp" / "askpass.sh").is_file()
+    # the staging helper outside the target is cleaned up
+    assert not (dest.parent / ".coagent-askpass").exists()
+
+
+def test_clone_into_a_fresh_nonexistent_path_works(repo_path: Path, tmp_path: Path) -> None:
+    from coagent.gitx.session import clone_repo
+
+    dest = tmp_path / "a" / "b" / "src"
+    clone_repo(str(repo_path), dest, depth=1)
+    assert (dest / ".git").is_dir()
+
+
 def test_askpass_script_written_not_embedded(repo_path: Path) -> None:
     r = GitRepo(repo_path, token="ghp_1234567890ABCDEFGHIJ")
     path = r.install_askpass()

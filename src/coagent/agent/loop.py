@@ -22,6 +22,7 @@ from __future__ import annotations
 import contextlib
 import json
 import shlex
+import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -263,9 +264,18 @@ class coAgent:
         # not inside whatever directory happened to be current.
         base = Path("/content") if Path("/content").is_dir() else Path.cwd()
         dest = base / "coagent-workspace" / (name or "project")
-        if not (dest / ".git").exists():
-            clone_repo(text, dest, depth=1, token=token)
-            self._emit("cloned", {"url": text, "path": str(dest)})
+        if (dest / ".git").exists():
+            return dest
+        # A directory with no `.git` is a leftover from an interrupted clone (or a
+        # plain mkdir), not a workspace. Reusing it makes `git clone` fail with
+        # exit 128 "destination path already exists and is not an empty"; git will
+        # not clone into a non-empty directory. Clear it and clone cleanly. The
+        # runtime is disposable and nothing tracked by git lives here.
+        if dest.exists() and any(dest.iterdir()):
+            shutil.rmtree(dest)
+            self._emit("workspace-reset", {"path": str(dest)})
+        clone_repo(text, dest, depth=1, token=token)
+        self._emit("cloned", {"url": text, "path": str(dest)})
         return dest
 
     def _preflight(self, *, allow_unsupported: bool) -> Any:

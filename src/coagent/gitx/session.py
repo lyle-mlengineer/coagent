@@ -228,6 +228,14 @@ def clone_repo(
     target.parent.mkdir(parents=True, exist_ok=True)
 
     repo = GitRepo(target, author_name=author_name, author_email=author_email, token=token)
-    repo.install_askpass()
+    # The helper must live outside `target`: `git clone` refuses a non-empty
+    # destination, so installing it inside the repo-to-be made every clone fail
+    # with exit 128 "already exists and is not an empty directory". Keep it in the
+    # workspace parent while cloning, then re-install it under the repo's own
+    # `.coagent/tmp` (the documented location) once the clone has landed.
+    stage_dir = target.parent / ".coagent-askpass" / target.name
+    repo.use_askpass(repo.install_askpass(stage_dir))
     repo.clone(url, target, depth=depth)
+    repo.use_askpass(repo.install_askpass())
+    shutil.rmtree(stage_dir.parent, ignore_errors=True)
     return repo

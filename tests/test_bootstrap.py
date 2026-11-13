@@ -165,6 +165,47 @@ def test_clone_failure_is_a_clear_error(monkeypatch, tmp_path: Path) -> None:
         coAgent("https://github.com/me/absent.git", backend=FakeBackend(["done"]))
 
 
+def test_a_stale_workspace_without_git_is_reset_not_fatal(monkeypatch, tmp_path: Path) -> None:
+    """Regression: a leftover dir made every retry die on `git clone` exit 128.
+
+    The workspace is keyed by repo name, so an interrupted clone (or a previous
+    run) leaves a non-empty directory with no `.git`. That used to be handed
+    straight to `git clone`, which refuses a non-empty destination; the user saw
+    "destination path already exists and is not an empty directory" and had no way
+    forward from the notebook. Now it is cleared and re-cloned.
+    """
+    from coagent.gitx import session as session_mod
+
+    calls: list[Path] = []
+
+    def fake_clone(_url, dest, **_kw):
+        calls.append(Path(dest))
+        d = Path(dest)
+        d.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, check=True, capture_output=True)
+        (d / "f.py").write_text("X = 1\n", encoding="utf-8")
+
+    monkeypatch.setattr(session_mod, "clone_repo", fake_clone)
+    monkeypatch.setattr("coagent.agent.loop.Path.cwd", staticmethod(lambda: tmp_path))
+    workspace = tmp_path / "coagent-workspace" / "proj"
+    workspace.mkdir(parents=True)
+    (workspace / "leftover.txt").write_text("stale", encoding="utf-8")
+
+    # The workspace the agent resolves to holds a real (fresh) clone afterwards.
+    from coagent.agent.loop import coAgent as _coAgent
+
+    agent_path = _coAgent._resolve_repo(
+        type("S", (), {"_resolve_repo": _coAgent._resolve_repo, "_emit": lambda *a: None})(),
+        "https://github.com/me/proj.git",
+        token=None,
+    )
+
+    assert agent_path == workspace.resolve()
+    assert len(calls) == 1
+    assert not (workspace / "leftover.txt").exists()
+    assert (workspace / ".git").is_dir()
+
+
 # ------------------------------------------------------------------- notebook
 
 

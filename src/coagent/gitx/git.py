@@ -84,6 +84,7 @@ class GitRepo:
         self.author_email = author_email
         self._token = token
         self.timeout_s = timeout_s
+        self._askpass_override: Path | None = None
 
     # --------------------------------------------------------------- plumbing
 
@@ -108,22 +109,37 @@ class GitRepo:
         )
         # Preserve the identity so `git commit` is attributable, but never the
         # credential: that is injected per-call only for the ops that need it.
-        if self._token and self._askpass_path().exists():
-            env["GIT_ASKPASS"] = str(self._askpass_path())
-            env["COAGENT_GIT_TOKEN"] = self._token
+        if self._token:
+            helper = getattr(self, "_askpass_override", None) or self._askpass_path()
+            if Path(helper).exists():
+                env["GIT_ASKPASS"] = str(helper)
+                env["COAGENT_GIT_TOKEN"] = self._token
         return env
 
     def _askpass_path(self) -> Path:
-        return self.root / ".coagent" / "tmp" / "askpass.sh"
+        return self._askpass_dir() / "askpass.sh"
 
-    def install_askpass(self) -> Path:
-        """Write the credential helper. Called once at bootstrap (DESIGN §11)."""
-        path = self._askpass_path()
+    def _askpass_dir(self) -> Path:
+        return self.root / ".coagent" / "tmp"
+
+    def install_askpass(self, directory: Path | None = None) -> Path:
+        """Write the credential helper. Called once at bootstrap (DESIGN §11).
+
+        `directory` overrides the default `<root>/.coagent/tmp` location. A clone
+        must pass one that lives *outside* the destination: `git clone` refuses a
+        non-empty target, so writing the helper into the repo-to-be makes every
+        clone fail with exit 128 before it starts.
+        """
+        path = Path(directory) / "askpass.sh" if directory is not None else self._askpass_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(format_askpass_script(), encoding="utf-8")
         with contextlib.suppress(OSError):  # Windows/ACL edge case
             path.chmod(0o700)
         return path
+
+    def use_askpass(self, path: Path) -> None:
+        """Point credential injection at an already-installed helper."""
+        self._askpass_override = Path(path)
 
     def run(self, *args: str, cwd: Path | None = None, check: bool = True) -> GitResult:
         argv = ["git", *args]
