@@ -16,7 +16,12 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
+  # The product target is a free Colab T4, which is Linux. The core loop, tool
+  # suite, and git plumbing also run on Windows and macOS for development, which
+  # is why the generic classifier is present: a Linux-only claim would be false
+  # and would discourage the laptop install the test suite is designed for.
   "Operating System :: POSIX :: Linux",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -45,6 +50,11 @@ ui = [
   "nbformat>=5.10",
   "nbconvert>=7.16",
 ]
+# Optional rich UI (DESIGN §8.3). Not required: the notebook surface is the
+# product, Gradio is a nicety.
+gradio = [
+  "gradio>=4.44,<6",
+]
 context = [
   "tree-sitter>=0.23,<0.25",
   "tree-sitter-python>=0.23",
@@ -62,7 +72,7 @@ dev = [
   "ipykernel>=6.29",
 ]
 colab = ["coagent[llm,ui,context]"]
-all = ["coagent[llm,ui,context,dev]"]
+all = ["coagent[llm,ui,gradio,context,dev]"]
 
 [project.urls]
 Homepage = "https://github.com/lyle-mlengineer/coagent"

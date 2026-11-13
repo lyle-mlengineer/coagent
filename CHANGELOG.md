@@ -3,7 +3,7 @@
 All notable changes to coAgent. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] - 2026-11-13
 
 ### Added
 
@@ -49,6 +49,16 @@ versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 - `run_shell`, `run_python` — process-group isolation with timeout kill, a
   scrubbed environment (no tokens reach the child), `CUDA_VISIBLE_DEVICES=""`
   by default (PRD D4), and a 64 KB head/tail output cap (FR-TOL-3).
+- `run_tests` — pytest output as a digest rather than a dump: pass/fail verdict,
+  failing node ids, and the `>` pointer plus `E` block for each failure, capped
+  at `verify.feedback_max_tokens` (DESIGN §7.5). Accepts `argv` (preferred, so a
+  tokenized command from config is never re-split) or a `command` string, which
+  is shlex-split without a shell. Classified EXEC, so it is unreachable from the
+  read-only SURVEY phase.
+- `coagent.tools.pyt` — the parser behind `run_tests`: `parse_pytest_output`
+  (failed names, per-failure traces, summary, version, duration) and
+  `summarise_pytest`. Whole traces only, most recent first, with an explicit
+  omission note instead of a half-rendered traceback.
 
 ### Git layer (`coagent.gitx`) — git as the agent's database
 
@@ -307,7 +317,6 @@ means the figure saved and visible (PRD US-3, G5). This is that pipeline.
   artifact; SURVEY and PLAN may not.
 
 ### Notebook UI (`coagent.ui`)
-
 The guaranteed surface (DESIGN §8.1): a chat cell that is good enough that the
 product works without Gradio. Split in two on purpose — `render.py` is the
 logic and is fully tested; `notebook.py` is plumbing.
@@ -347,9 +356,32 @@ logic and is fully tested; `notebook.py` is plumbing.
 - The loop's `tool` event now carries `path`, so the transcript can name the file
   in a collapsed row without re-parsing tool output.
 
+### Optional Gradio UI (`coagent.ui.gradio_app`)
+DESIGN §8.3 calls this a *nicety*, so it is built as one: optional, guarded, and
+reusing the same `Transcript` the notebook draws. Nothing in the loop requires it.
+
+- `GradioApp` — a status line, a markdown transcript, an approval banner with
+  Approve/Deny, and a prompt box, on `ui.gradio_port` (default 7860).
+- Served **loopback only** (`server_name="127.0.0.1"`, `share=False`). In Colab
+  the tab reaches it through `serve_kernel_port_as_window`, so there is no reason
+  to bind a public interface; ngrok and `share=True` stay out of scope.
+- `pip install 'coagent[gradio]'`, or `coagent[all]`. Importing `coagent.ui`
+  without Gradio is fine — the widget modules load lazily and `GradioApp()` raises
+  `GradioUnavailable` with the exact install command.
+- Approvals reuse the notebook contract: a `threading.Event` the loop blocks on,
+  a timeout, and **deny on expiry**, because a missing human is not consent (§9.1).
+- The pending command is HTML-escaped before it reaches the banner: it is model
+  output, and the banner is markup.
+- `render_artifact` records the path in the transcript rather than pretending
+  Gradio can display an artifact inline; the notebook cell remains the place
+  artifacts are actually shown. The two surfaces are honest about the difference.
+- Tests substitute a minimal stub when real Gradio is unavailable (it does not
+  install on Python 3.15), so the approval queue, hook wiring, HTML escaping, and
+  launch kwargs are exercised rather than skipped.
+
 ### Tests
 
-434 unit and integration tests, CPU-only — no GPU and no network required.
+475 unit and integration tests, CPU-only — no GPU and no network required.
 
 ### Bootstrap (FR-BOOT-1/2, FR-DIS-2)
 
@@ -379,7 +411,17 @@ the dirty-tree refusal, plan rejection before any write, honest verify trailers,
 and clean budget exhaustion. Notebook execution tests run against a real Jupyter
 kernel and skip cleanly when none is installed.
 
-## [0.1.0] - TBD
+### Release notes — 0.1.0
 
-First release target: milestone M1. Fix a failing test in a toy repo end-to-end
-on a free T4 (acceptance test AT-1).
+First release: milestone M1. The loop is proven end-to-end on `FakeBackend` in
+`notebooks/bootstrap.ipynb`, and the full v0.1 tool surface from `DESIGN.md` is
+built — including `run_tests`/`tools/pyt.py`, which turns pytest output into a
+digest instead of a dump. Every module in `DESIGN.md` §11 exists; the remaining
+work before a T4 run is breadth of behaviour on a real GPU, not missing code.
+
+Verification performed for this release: 476 tests pass with no skips, and the
+built wheel installs into a clean venv where `coagent init`, `config`, `tools`,
+and `run --dry-run` all succeed outside the source tree.
+
+Not yet proven: a real 7B NF4 load and a live loop run on a free T4 (acceptance
+test AT-1). That requires the Colab runtime and is the first post-release check.
