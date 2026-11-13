@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "co-agent-coder"
-version = "0.1.0"
+version = "0.1.1"
 description = "A private AI coding agent for the free Google Colab T4: local 7B model, git-backed memory, reviewable branches."
 readme = "README.md"
 requires-python = ">=3.10"

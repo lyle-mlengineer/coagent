@@ -3,6 +3,22 @@
 All notable changes to coAgent. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-11-13
+
+### Fixed
+
+- The README cover image and doc links now use absolute URLs
+  (`https://raw.githubusercontent.com/lyle-mlengineer/coagent/main/...` and
+  `https://github.com/lyle-mlengineer/coagent/blob/main/...`). PyPI serves the
+  long description from its own host, so the previous relative paths
+  (`./assets/cover.png`, `./DESIGN.md`, `./PRD.md`, `./LICENSE`) resolved
+  against `pypi.org` and rendered as broken images and dead links on the
+  project page.
+
+This release exists only to ship the corrected description: PyPI does not allow
+editing the long description of an already-uploaded release, so `0.1.0`'s page
+cannot be fixed in place. There are no code or API changes from `0.1.0`.
+
 ## [0.1.0] - 2026-11-13
 
 ### Added
