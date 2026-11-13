@@ -16,7 +16,16 @@
 
 **[Open in Colab](https://colab.research.google.com/github/lyle-mlengineer/coagent/blob/main/notebooks/bootstrap.ipynb) · [Design](./DESIGN.md) · [PRD](./PRD.md) · [Web front door](https://github.com/lyle-mlengineer/coagent-web)**
 
-> **Design stage.** This repository holds the full architecture (`DESIGN.md`) and product requirements (`PRD.md`); implementation starts at v0.1 in the build plan below. Every interface shown here — the cell, the commands, the config — is the target v0.1 surface, not a shipped package yet.
+> **Alpha release.** `0.1.0` is published on PyPI as [`co-agent-coder`](https://pypi.org/project/co-agent-coder/). The architecture lives in `DESIGN.md` and the requirements in `PRD.md`; the interfaces below are the shipped v0.1 surface.
+
+### Install
+
+```bash
+pip install co-agent-coder            # core: config, loop, tools, git plumbing
+pip install "co-agent-coder[colab]"   # + the GPU stack, notebook surface, and context tools
+```
+
+The distribution is named `co-agent-coder`; the import name and the CLI are both `coagent`.
 
 ### Run it
 
@@ -241,7 +250,7 @@ deny = ["git push --force", "git push origin main"]
 - **Runtime** — PyTorch, Hugging Face Transformers, bitsandbytes NF4, accelerate. fp16 + SDPA on Turing; bf16 and FlashAttention-2 are never assumed.
 - **Context and editing** — tree-sitter repo map, BM25 retrieval, JSONL session logs, and SEARCH/REPLACE edits with a unique-match requirement. `outlines` is the optional constrained-decoding path.
 - **Verification** — pytest and Ruff as the reference commands, run CPU-only with `CUDA_VISIBLE_DEVICES=""`; `nbformat` + `nbconvert` for notebooks.
-- **Delivery** — `pip install` from git and one bootstrap notebook. No daemon, no tunnel, no client framework.
+- **Delivery** — `pip install co-agent-coder` (or from git) and one bootstrap notebook. No daemon, no tunnel, no client framework.
 
 ## Project structure
 

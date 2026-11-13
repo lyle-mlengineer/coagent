@@ -58,6 +58,6 @@ notebooks/           bootstrap.ipynb — the only cell a user runs
   It is read through `importlib.resources`, never via a relative filesystem path,
   so it works from a wheel, from an sdist, and from the source tree.
 - Heavy dependencies live in extras. `dependencies` stays small so
-  `pip install coagent` is fast and the test suite does not need CUDA.
+  `pip install co-agent-coder` is fast and the test suite does not need CUDA.
 - Bump `schema_version` in `config.py` only for incompatible config changes;
   older configs keep working, newer ones are refused with a migration hint.
