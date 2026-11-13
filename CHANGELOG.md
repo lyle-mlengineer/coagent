@@ -3,6 +3,22 @@
 All notable changes to coAgent. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-11-13
+
+### Fixed
+
+- **Every `coAgent(repo="https://…")` clone failed** with
+  `GitError: git clone failed (exit 128): fatal: destination path '…' already
+  exists and is not an empty directory`. The `GIT_ASKPASS` helper was written to
+  `<destination>/.coagent/tmp/askpass.sh` *before* `git clone` ran, so the clone
+  target was never empty — git refuses to clone into a non-empty directory. The
+  helper is now staged outside the destination and moved into the repo once the
+  clone lands. This broke first-run bootstrap on Colab, not just retries.
+- A workspace directory left behind by an interrupted clone (a non-empty
+  `coagent-workspace/<name>` with no `.git`) is now cleared and re-cloned instead
+  of being passed to `git clone` and failing again. A `workspace-reset` event is
+  emitted first, so the notebook transcript shows what happened.
+
 ## [0.1.1] - 2026-11-13
 
 ### Fixed

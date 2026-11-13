@@ -17,7 +17,7 @@ import sys
 
 from .config import Config, ConfigError, load_config
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = ["Config", "ConfigError", "__version__", "coAgent", "load_config"]
 

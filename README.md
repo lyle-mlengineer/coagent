@@ -16,7 +16,7 @@
 
 **[Open in Colab](https://colab.research.google.com/github/lyle-mlengineer/coagent/blob/main/notebooks/bootstrap.ipynb) · [Design](https://github.com/lyle-mlengineer/coagent/blob/main/DESIGN.md) · [PRD](https://github.com/lyle-mlengineer/coagent/blob/main/PRD.md) · [Web front door](https://github.com/lyle-mlengineer/coagent-web)**
 
-> **Alpha release.** `0.1.1` is published on PyPI as [`co-agent-coder`](https://pypi.org/project/co-agent-coder/). The architecture lives in `DESIGN.md` and the requirements in `PRD.md`; the interfaces below are the shipped v0.1 surface.
+> **Alpha release.** `0.1.2` is published on PyPI as [`co-agent-coder`](https://pypi.org/project/co-agent-coder/). The architecture lives in `DESIGN.md` and the requirements in `PRD.md`; the interfaces below are the shipped v0.1 surface.
 
 ### Install
 
