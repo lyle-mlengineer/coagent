@@ -3,6 +3,21 @@
 All notable changes to coAgent. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-11-13
+
+### Fixed
+
+- **A task could never finish once it fell back to the generic plan.** The plan's
+  "make the change the task asks for" step names no file, so no edit could tick
+  it, and a passing `run_tests` ticked nothing at all — the verification step only
+  ticks from `_verify_and_commit`, which `run_tests` never reaches. Either way
+  `plan.complete` (the definition of done) stayed false, the model re-issued the
+  identical action, and the loop detector stopped the task with
+  "You have repeated the same action too many times", `commits=0`. A successful
+  write now satisfies the generic change step, and a passing `run_tests` ticks the
+  verify step (both only after real files have changed, like the existing read
+  rule).
+
 ## [0.1.3] - 2026-11-13
 
 ### Fixed
