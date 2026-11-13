@@ -43,6 +43,7 @@ from ..safety.redact import Redactor
 from ..tools import Phase, build_policy, build_registry
 from ..tools.base import ToolError, ToolRegistry, ToolResult, ToolSchemaError
 from ..tools.fs import FileSession
+from ..tools.pyt import summarise_pytest
 from . import prompts
 from .budget import Budget, BudgetExhausted, BudgetLimits, LoopDetector, LoopVerdict
 from .state import PlanFile, SessionState, slugify
@@ -102,7 +103,7 @@ class AgentResult:
 
 
 _WRITE_TOOLS = {"edit_file", "write_file", "edit_notebook"}
-_EXEC_TOOLS = {"run_shell", "run_python"}
+_EXEC_TOOLS = {"run_shell", "run_python", "run_tests"}
 #: Tools whose success means a file on disk changed and a verify+commit is due.
 #: `save_artifact` belongs here because the manifest and any committed artifact
 #: must ride in the same commit that produced them (FR-GIT-10); it is not in
@@ -725,16 +726,30 @@ class coAgent:
 
         outputs: list[str] = []
         all_ok = True
+        failure_digest = ""
         for command in commands:
             argv = shlex.split(command) if isinstance(command, str) else [str(a) for a in command]
             label = command if isinstance(command, str) else " ".join(argv)
             try:
-                tool_result = self.registry.call("run_shell", {"argv": argv})
-            except (ToolError, ToolSchemaError) as exc:
-                tool_result = ToolResult.failure(str(exc))
+                tool_result = self.registry.call("run_tests", {"argv": argv, "command": label})
+            except (ToolError, ToolSchemaError):
+                # Older/minimal registries may not carry run_tests; the raw run
+                # is still correct, just noisier.
+                try:
+                    tool_result = self.registry.call("run_shell", {"argv": argv})
+                except (ToolError, ToolSchemaError) as exc:
+                    tool_result = ToolResult.failure(str(exc))
             outputs.append(f"$ {label}\n{tool_result.content[-1200:]}")
             if not tool_result.ok:
                 all_ok = False
+                # Keep the *parsed* failure, not the tail of the raw dump: the
+                # verdict and the failing test names sit at the end of a pytest
+                # run, and a flat cut throws away the traceback that explains it
+                # (§7.5, capped by verify.feedback_max_tokens).
+                failure_digest = summarise_pytest(
+                    tool_result.content,
+                    cap=int(self.cfg.verify.feedback_max_tokens * 4),
+                )
                 break
 
         summary = "\n".join(outputs)
@@ -742,7 +757,7 @@ class coAgent:
         self._emit("verify", {"ok": all_ok, "summary": summary[-1500:]})
 
         if not all_ok:
-            self._last_failure = summary[-1200:]
+            self._last_failure = failure_digest or summary[-1200:]
             try:
                 self.budget.record_failure()
             except BudgetExhausted:

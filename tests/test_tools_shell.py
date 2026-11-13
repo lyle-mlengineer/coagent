@@ -137,3 +137,75 @@ def test_verify_phase_has_no_write_tools(repo: Path) -> None:
     reg = build_registry(repo, Config(), phase=Phase.VERIFY)
     assert "edit_file" not in reg
     assert "run_shell" in reg
+
+
+# ------------------------------------------------------------------ run_tests
+
+
+def _pytest_repo(tmp_path: Path) -> Path:
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "test_sample.py").write_text(
+        "def helper(x):\n"
+        "    raise KeyError(f'missing {x}')\n"
+        "\n"
+        "def test_deep():\n"
+        "    helper(3)\n"
+        "\n"
+        "def test_ok():\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_run_tests_reports_failing_names(tmp_path: Path) -> None:
+    """The whole point: the model sees names and errors, not a 500-line dump."""
+    repo = _pytest_repo(tmp_path)
+    reg = build_registry(repo, Config(), phase=Phase.ACT)
+    res = reg.call("run_tests", {"argv": [sys.executable, "-m", "pytest", "-q", "test_sample.py"]})
+
+    assert not res.ok
+    assert res.meta["failures"] == ["test_sample.py::test_deep"]
+    assert res.meta["passed"] == 1
+    assert "test_sample.py::test_deep" in res.content
+    assert "KeyError" in res.content
+    assert len(res.content) < 1000, "the digest must stay small"
+
+
+def test_run_tests_passes_when_green(tmp_path: Path) -> None:
+    repo = tmp_path / "ok"
+    repo.mkdir()
+    (repo / "test_ok.py").write_text("def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    reg = build_registry(repo, Config(), phase=Phase.VERIFY)
+    res = reg.call("run_tests", {"argv": [sys.executable, "-m", "pytest", "-q"]})
+    assert res.ok
+    assert res.meta["failures"] == []
+    assert "1 passed" in res.content
+
+
+def test_run_tests_argv_is_not_re_split(tmp_path: Path) -> None:
+    """A tokenized command from config must survive quoting intact."""
+    repo = tmp_path / "q"
+    repo.mkdir()
+    reg = build_registry(repo, Config(), phase=Phase.ACT)
+    res = reg.call("run_tests", {"argv": [sys.executable, "-c", "print('hi')"]})
+    assert res.ok
+    assert "hi" in res.content
+
+
+def test_run_tests_accepts_a_command_string(tmp_path: Path) -> None:
+    repo = tmp_path / "s"
+    repo.mkdir()
+    reg = build_registry(repo, Config(), phase=Phase.ACT)
+    res = reg.call("run_tests", {"command": f"{sys.executable} -c \"print(7)\""})
+    assert res.ok
+    assert "7" in res.content
+
+
+def test_run_tests_is_exec_safety(tmp_path: Path) -> None:
+    """It must not be reachable from the read-only SURVEY phase."""
+    repo = tmp_path / "safety"
+    repo.mkdir()
+    reg = build_registry(repo, Config(), phase=Phase.SURVEY)
+    assert "run_tests" not in reg

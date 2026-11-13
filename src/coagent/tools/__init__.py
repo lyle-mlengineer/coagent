@@ -26,7 +26,7 @@ from .fs import (
     truncate_head_tail,
 )
 from .notebooks import EditNotebookTool, ExecNotebookTool, ReadNotebookTool
-from .shell import ExecConfig, RunPythonTool, RunShellTool
+from .shell import ExecConfig, RunPythonTool, RunShellTool, RunTestsTool
 
 __all__ = [
     "ArgSpec",
@@ -141,6 +141,12 @@ def build_registry(
         SaveArtifactTool(session),
         DisplayArtifactTool(session),
         RunShellTool(exec_cfg, policy),
+        RunTestsTool(
+            exec_cfg,
+            policy,
+            verify_commands=list(cfg.verify.commands),
+            feedback_max_tokens=cfg.verify.feedback_max_tokens,
+        ),
         RunPythonTool(exec_cfg, policy),
     ]
     allowed = PHASE_SAFETY.get(phase)
