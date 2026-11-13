@@ -3,6 +3,23 @@
 All notable changes to coAgent. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-11-13
+
+### Fixed
+
+- **The documented Colab install never installed bitsandbytes.** The bootstrap
+  notebook ran `pip install "co-agent-coder @ git+https://…"` with no extra, so
+  the GPU stack was absent and the first `agent.chat(...)` failed with
+  `ImportError: Using bitsandbytes 4-bit quantization requires bitsandbytes`.
+  The cell now installs `co-agent-coder[colab]`.
+- The `llm` extra allowed `bitsandbytes>=0.43`, but transformers refuses
+  anything below **0.46.1** — `is_bitsandbytes_available()` returns False and
+  its 4-bit quantizer will not load. The floor is now `>=0.46.1` (`<0.51`), so a
+  clean install cannot resolve a version the runtime rejects.
+- Model load now checks the bitsandbytes version up front and raises coAgent's
+  own error naming the extra and the pip command, before any weights are
+  touched, instead of a bare `ImportError` from inside transformers.
+
 ## [0.1.2] - 2026-11-13
 
 ### Fixed
