@@ -20,9 +20,12 @@ from .render import (
 
 __all__ = [
     "ChatCell",
+    "GradioApp",
+    "GradioUnavailable",
     "MODE_GLYPH",
     "Row",
     "Transcript",
+    "gradio_available",
     "render_status_line",
     "shorten_path",
     "summarise_verify",
@@ -31,9 +34,17 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    """Import `ChatCell` lazily so `render` stays usable without ipywidgets."""
+    """Import the widget surfaces lazily so `render` stays usable headless.
+
+    Both surfaces pull in a different optional dependency (ipywidgets, gradio);
+    neither should be needed to import the transcript that renders them.
+    """
     if name == "ChatCell":
         from .notebook import ChatCell
 
         return ChatCell
+    if name in {"GradioApp", "GradioUnavailable", "gradio_available"}:
+        from . import gradio_app
+
+        return getattr(gradio_app, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
