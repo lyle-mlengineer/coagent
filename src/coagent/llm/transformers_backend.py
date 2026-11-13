@@ -52,6 +52,56 @@ def _transformers():
     return transformers
 
 
+# The floor transformers enforces before its 4-bit quantizer will load at all.
+# Below it `is_bitsandbytes_available()` is False and the failure surfaces as a
+# bare `ImportError` from deep inside `from_pretrained`, which reads as a
+# packaging bug rather than "install the extra".
+BNB_MIN_VERSION = "0.46.1"
+
+
+def _installed_bnb_version() -> str | None:
+    """The installed bitsandbytes version, or None when it is not installed."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("bitsandbytes")
+    except PackageNotFoundError:
+        return None
+
+
+def _check_bitsandbytes() -> None:
+    """Fail early, and in coAgent's own words, when bnb is missing or too old.
+
+    Raises:
+        ImportError: with the exact fix to run, naming the extra that supplies it.
+    """
+    installed = _installed_bnb_version()
+    if installed is None:
+        raise ImportError(
+            "4-bit quantization needs bitsandbytes, which is not installed. "
+            'Install the GPU stack with  pip install -U "co-agent-coder[colab]"  '
+            f"(or `pip install -U bitsandbytes>={BNB_MIN_VERSION}`). On Colab, make "
+            "sure the install cell includes the [colab] extra."
+        )
+
+    def _parts(text: str) -> tuple[int, ...]:
+        out: list[int] = []
+        for chunk in text.split("."):
+            digits = "".join(ch for ch in chunk if ch.isdigit())
+            if not digits:
+                break
+            out.append(int(digits))
+        return tuple(out)
+
+    if _parts(installed) < _parts(BNB_MIN_VERSION):
+        raise ImportError(
+            f"bitsandbytes {installed} is too old for 4-bit quantization; "
+            f"transformers requires >= {BNB_MIN_VERSION}. "
+            f"Run  pip install -U 'bitsandbytes>={BNB_MIN_VERSION}'  and restart "
+            "the kernel (the old CUDA library stays loaded until you do)."
+        )
+
+
 @dataclass(slots=True)
 class OutOfMemoryLadder:
     """The OOM response order from DESIGN §4.5.
@@ -122,6 +172,7 @@ class TransformersBackend(LLMBackend):
             return
         torch = _torch()
         transformers = _transformers()
+        _check_bitsandbytes()
         auto_model = transformers.AutoModelForCausalLM
         auto_tokenizer = transformers.AutoTokenizer
 

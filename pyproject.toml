@@ -40,7 +40,7 @@ llm = [
   "torch>=2.4,<2.7",
   "transformers>=4.45,<4.49",
   "accelerate>=0.34,<1.2",
-  "bitsandbytes>=0.43,<0.47",
+  "bitsandbytes>=0.46.1,<0.51",
   "safetensors>=0.4.3",
 ]
 # Notebook surface + notebook tools.

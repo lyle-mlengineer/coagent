@@ -82,6 +82,8 @@ def _install_fake_transformers(monkeypatch) -> MagicMock:
 
     monkeypatch.setattr(module, "_torch", lambda: torch_stub)
     monkeypatch.setattr(module, "_transformers", lambda: fake)
+    # The bnb gate is satisfied: these tests simulate a working GPU box.
+    monkeypatch.setattr(module, "_installed_bnb_version", lambda: "0.46.1")
     return fake
 
 
@@ -179,3 +181,53 @@ def test_ladder_order() -> None:
     ladder.advance()
     assert ladder.exhausted
     assert ladder.next_action() == "stop"
+
+
+# --------------------------------------------------- bitsandbytes availability
+#
+# Reproduced on Colab: the notebook installed the package *without* the [colab]
+# extra, so bitsandbytes was absent and `from_pretrained` raised a bare
+# ImportError from inside transformers. These pin the early, actionable message.
+
+
+def test_missing_bitsandbytes_says_install_the_extra(monkeypatch) -> None:
+    import pytest
+
+    module = sys.modules["coagent.llm.transformers_backend"]
+    monkeypatch.setattr(module, "_installed_bnb_version", lambda: None)
+    with pytest.raises(ImportError, match=r"co-agent-coder\[colab\]"):
+        module._check_bitsandbytes()
+
+
+def test_old_bitsandbytes_names_the_version_and_the_fix(monkeypatch) -> None:
+    import pytest
+
+    module = sys.modules["coagent.llm.transformers_backend"]
+    monkeypatch.setattr(module, "_installed_bnb_version", lambda: "0.45.5")
+    with pytest.raises(ImportError) as err:
+        module._check_bitsandbytes()
+    msg = str(err.value)
+    assert "0.45.5" in msg  # what they have
+    assert "0.46.1" in msg  # what they need
+    assert "restart the kernel" in msg  # the CUDA lib stays loaded otherwise
+
+
+def test_a_supported_bitsandbytes_passes(monkeypatch) -> None:
+    module = sys.modules["coagent.llm.transformers_backend"]
+    for ok in ("0.46.1", "0.47.0", "0.50.2"):
+        monkeypatch.setattr(module, "_installed_bnb_version", lambda v=ok: v)
+        module._check_bitsandbytes()  # must not raise
+
+
+def test_load_refuses_before_touching_the_model(monkeypatch) -> None:
+    """The gate runs before any weights are touched, so the failure is cheap."""
+    import pytest
+
+    module = sys.modules["coagent.llm.transformers_backend"]
+    fake = _install_fake_transformers(monkeypatch)
+    monkeypatch.setattr(module, "_installed_bnb_version", lambda: None)
+    b = TransformersBackend(model_key="qwen-coder-3b")
+    with pytest.raises(ImportError, match="bitsandbytes"):
+        b.load()
+    assert not fake.AutoModelForCausalLM.from_pretrained.called
+    assert not b.loaded

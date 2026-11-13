@@ -27,6 +27,14 @@ pip install "co-agent-coder[colab]"   # + the GPU stack, notebook surface, and c
 
 The distribution is named `co-agent-coder`; the import name and the CLI are both `coagent`.
 
+The **`[colab]` extra is not optional if you intend to load a model.** It carries
+torch, transformers, and bitsandbytes; the plain install is the loop, tools, and
+git plumbing only, which is why it works on a laptop CPU. Installing without the
+extra and then calling `agent.chat(...)` fails at model load with
+`Using bitsandbytes 4-bit quantization requires bitsandbytes`. bitsandbytes must
+be `>=0.46.1` — that is the floor transformers enforces before its NF4 quantizer
+will run.
+
 ### Run it
 
 Open the bootstrap notebook in Colab — **Runtime → Change runtime type → T4 GPU** — and run the cells. The whole install story is three lines:
