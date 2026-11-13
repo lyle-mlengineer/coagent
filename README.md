@@ -154,8 +154,7 @@ The target flow is one Colab notebook, one repo URL, and a task. Everything belo
 6. **Recover.** If the runtime dies, run `coagent resume` on a fresh VM and it replays from the last checkpoint, losing at most one step.
 
 ```python
-# Planned — ships with v0.1. Not installable yet.
-!pip -q install "git+https://github.com/lyle-mlengineer/coagent"
+!pip -q install co-agent-coder        # or: git+https://github.com/lyle-mlengineer/coagent
 
 from coagent import coAgent
 
