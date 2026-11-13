@@ -178,20 +178,47 @@ class coAgent:
         self.redactor = Redactor([token] if token else [])
 
         if backend is None:
-            # FR-BOOT-2: refuse before loading weights, not after four gigabytes
-            # of them and a CUDA error. A caller who injects a backend has
-            # already made their own hardware decision, so this is skipped.
-            self.preflight = self._preflight(allow_unsupported=allow_unsupported)
-            if not self.preflight.ok:
-                raise HardwareError(self.preflight.reason)
-            self._emit("preflight", {"summary": self.preflight.describe()})
-            from ..llm import make_backend
+            provider_cfg = getattr(self.cfg.model, "provider", None)
+            using_provider = provider_cfg is not None and provider_cfg.enabled
+            if using_provider:
+                # A hosted model needs no T4: preflight would refuse on a laptop
+                # for no reason. The trade is egress, so say so out loud — PRD
+                # FR-MDL-7 makes local inference the default guarantee, and
+                # switching to a provider is a deliberate, visible choice.
+                from ..llm import backend_from_config
 
-            spec = get_model_by_name(self.cfg.model.name)
-            key = spec.key if spec else "qwen-coder-7b"
-            backend = make_backend(
-                "transformers", model_key=key, max_context=self.cfg.model.max_context
-            )
+                backend = backend_from_config(self.cfg)
+                remote = getattr(getattr(backend, "provider", None), "is_remote", True)
+                if remote:
+                    self._emit(
+                        "egress_notice",
+                        {
+                            "provider": getattr(backend.provider, "name", "custom"),
+                            "base_url": backend.provider.base_url,
+                            "model": backend.provider.model,
+                            "message": (
+                                "Using a hosted model: prompts and file contents are "
+                                f"sent to {backend.provider.base_url}. Local inference "
+                                "(the default, PRD FR-MDL-7) makes no such calls; set "
+                                "[model.provider] enabled = false to go back."
+                            ),
+                        },
+                    )
+            else:
+                # FR-BOOT-2: refuse before loading weights, not after four gigabytes
+                # of them and a CUDA error. A caller who injects a backend has
+                # already made their own hardware decision, so this is skipped.
+                self.preflight = self._preflight(allow_unsupported=allow_unsupported)
+                if not self.preflight.ok:
+                    raise HardwareError(self.preflight.reason)
+                self._emit("preflight", {"summary": self.preflight.describe()})
+                from ..llm import make_backend
+
+                spec = get_model_by_name(self.cfg.model.name)
+                key = spec.key if spec else "qwen-coder-7b"
+                backend = make_backend(
+                    "transformers", model_key=key, max_context=self.cfg.model.max_context
+                )
         self.backend = backend
         self.model_id = model or getattr(backend, "model_id", "unknown")
 

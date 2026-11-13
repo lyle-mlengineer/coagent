@@ -102,3 +102,31 @@ mode = "show"
 # Optional Gradio surface behind the Colab port proxy (P1, never required).
 gradio = false
 gradio_port = 7860
+
+# ---------------------------------------------------------------- provider ---
+# Run against any OpenAI-compatible endpoint (Groq, OpenRouter, NVIDIA NIM,
+# Together, Fireworks, Ollama, LM Studio, vLLM) instead of loading a local model.
+#
+# OFF BY DEFAULT ON PURPOSE. PRD FR-MDL-7 guarantees that model execution makes
+# no network calls: with this disabled, your source code never leaves the VM.
+# Enabling it sends prompts and file contents to the endpoint below — that is a
+# real privacy trade, so the agent prints a notice at session start and every
+# commit trailer records which provider and model produced the work.
+#
+# This is the fastest way to try coAgent locally: no GPU, no 4 GB download.
+#
+#   [model.provider]
+#   enabled = true
+#   name = "groq"                # preset: groq | openrouter | nvidia | together
+#                                #         fireworks | ollama | lmstudio | vllm
+#   # base_url = "https://..."   # optional: overrides the preset
+#   # model = "qwen/qwen3-32b"   # optional: overrides the preset's default
+#   api_key_env = "GROQ_API_KEY" # the *name* of the env var; never the key
+#   max_context = 32768          # hosted models are not bound by the T4 cap
+#   timeout_s = 120
+#
+# The key is read from the environment, never from this file — this config is
+# committed to the repo. export GROQ_API_KEY=... before you start.
+#
+# [model.provider]
+# enabled = false

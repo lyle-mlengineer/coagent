@@ -16,7 +16,7 @@
 
 **[Open in Colab](https://colab.research.google.com/github/lyle-mlengineer/coagent/blob/main/notebooks/bootstrap.ipynb) · [Design](https://github.com/lyle-mlengineer/coagent/blob/main/DESIGN.md) · [PRD](https://github.com/lyle-mlengineer/coagent/blob/main/PRD.md) · [Web front door](https://github.com/lyle-mlengineer/coagent-web)**
 
-> **Alpha release.** `0.1.4` is published on PyPI as [`co-agent-coder`](https://pypi.org/project/co-agent-coder/). The architecture lives in `DESIGN.md` and the requirements in `PRD.md`; the interfaces below are the shipped v0.1 surface.
+> **Alpha release.** `0.2.0` is published on PyPI as [`co-agent-coder`](https://pypi.org/project/co-agent-coder/). The architecture lives in `DESIGN.md` and the requirements in `PRD.md`; the interfaces below are the shipped v0.1 surface.
 
 ### Install
 
@@ -50,6 +50,48 @@ The notebook checks your hardware before loading weights and refuses with a reas
 **coAgent is an AI coding agent that lives inside a Google Colab notebook.** It clones your repo into the free T4, plans inside your own files, edits with a locally loaded 7B model, runs your tests on CPU, and commits every checkpoint back to git — on a branch you can review. The runtime is disposable; the repository is the memory.
 
 No API keys. No per-token cost. Nothing sent to a third-party model API — your code only travels to the repo you already own.
+
+> **One documented exception:** you can *opt in* to an OpenAI-compatible endpoint (Groq, OpenRouter, NVIDIA NIM, Together, Fireworks, or a local Ollama/vLLM server) — see [Run it against a hosted model](#run-it-against-a-hosted-model). It is off by default, and when you turn it on the agent says plainly that prompts and file contents will be sent there.
+
+### Run it against a hosted model
+
+The local 7B model is the product's point, but it is a slow way to develop *the agent*: every tool change means a GPU and a 4 GB download. coAgent can drive the same loop with any [OpenAI-compatible](https://platform.openai.com/docs/api-reference/chat) endpoint instead, which makes the whole thing testable on a laptop in seconds.
+
+```toml
+# .coagent/config.toml
+[model.provider]
+enabled = true
+name = "groq"                # groq | openrouter | nvidia | together
+                             # fireworks | ollama | lmstudio | vllm
+api_key_env = "GROQ_API_KEY" # the *name* of the env var, never the key
+```
+
+```bash
+export GROQ_API_KEY=...      # the config is committed, so the key never goes in it
+coagent doctor               # shows the endpoint, whether the key resolves, and egress
+```
+
+Everything else is unchanged: the same plan approval, the same tools, the same `ruff`/`pytest` verification, the same commit trailers. Only the token source differs, and every commit records which one it was (`Coagent-Model: groq:qwen/qwen3-32b`).
+
+Worth being precise about the trade:
+
+| | local (default) | provider |
+| --- | --- | --- |
+| Cost | free | their pricing |
+| Needs a GPU | yes, T4 | no |
+| Your code goes to | nowhere | that provider |
+| Speed to first token | 4 GB download | seconds |
+
+Use a provider to develop and test the agent, then switch `enabled = false` for the free, private run. A **loopback** endpoint (`localhost`, `127.0.0.1`) is also accepted with no key and is *not* treated as egress — that covers Ollama, LM Studio, and a local vLLM.
+
+Any OpenAI-compatible server works, not just the presets:
+
+```toml
+[model.provider]
+enabled = true
+base_url = "http://localhost:8000/v1"   # your own vLLM
+model = "Qwen/Qwen2.5-Coder-7B-Instruct"
+```
 
 The public landing page, waitlist, and GitHub sign-in live in [coagent-web](https://github.com/lyle-mlengineer/coagent-web). This repo is the agent itself.
 
@@ -199,7 +241,11 @@ Per-repo settings are committed so a session is reproducible on any machine:
 | --- | --- | --- |
 | `model.name` | `Qwen/Qwen2.5-Coder-7B-Instruct` | 3B is the validated fallback. |
 | `model.quant` | `nf4` | bitsandbytes NF4; fp16 compute on T4. |
-| `model.max_context` | `12288` | Hard cap, counted with the model's tokenizer. |
+| `model.max_context` | `12288` | Hard cap for the T4; not applied in provider mode. |
+| `model.provider.enabled` | `false` | Opt in to an OpenAI-compatible endpoint instead of a local model. |
+| `model.provider.name` | `""` | `groq`, `openrouter`, `nvidia`, `together`, `fireworks`, `ollama`, `lmstudio`, `vllm`. |
+| `model.provider.base_url` | `""` | Any OpenAI-compatible endpoint; overrides the preset. |
+| `model.provider.api_key_env` | `""` | Names the env var holding the key — never the key itself. |
 | `verify.commands` | `["ruff check .", "pytest -q"]` | CPU-only by default. |
 | `verify.gpu_commands` | `[]` | Explicit opt-in; the model yields VRAM first. |
 | `verify.timeout_s` | `300` | Per command; process group is killed. |

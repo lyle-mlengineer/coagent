@@ -3,6 +3,41 @@
 All notable changes to coAgent. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-11-13
+
+### Added
+
+- **OpenAI-compatible model providers.** `[model.provider] enabled = true` runs the
+  loop against any `/chat/completions` endpoint instead of a local 4-bit model:
+  Groq, OpenRouter, NVIDIA NIM, Together, Fireworks, and Ollama / LM Studio / vLLM
+  by name, or any server via `base_url`. This makes the agent testable on a laptop
+  with no GPU and no 4 GB download — the reason DESIGN §1 kept `llm/` behind one
+  interface.
+  - `coagent.llm.openai_backend` — streaming SSE and non-streaming, `on_token`
+    and `cancel` honoured, usage from the provider's `usage` block (estimated when
+    omitted), and HTTP errors (401/403/404/422/429, unreachable host, no choices)
+    mapped to messages that name the fix.
+  - Standard library only (`urllib`) — no new install requirement for the core.
+  - `coagent doctor` reports the endpoint, whether the key resolves, and whether
+    traffic actually leaves the machine.
+- The API key is read from an environment variable named by
+  `model.provider.api_key_env`, never from the committed config. A loopback
+  endpoint needs no key and is not treated as egress.
+
+### Changed
+
+- Provider mode skips the T4 preflight (a hosted model has no GPU envelope), and
+  the `model.max_context` cap of 12288 no longer applies — that number exists to
+  fit a T4 KV cache.
+- Every commit in provider mode records `Coagent-Model: <provider>:<model>`, so a
+  branch says which model produced it.
+
+### Unchanged
+
+- **Local inference is still the default and still makes no network calls**
+  (PRD FR-MDL-7). Enabling a provider is an explicit choice, and a remote endpoint
+  triggers an `egress_notice` event at session start.
+
 ## [0.1.4] - 2026-11-13
 
 ### Fixed

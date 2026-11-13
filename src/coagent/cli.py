@@ -7,6 +7,7 @@ eval verbs land with the loop in milestone M1.
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import sys
 from pathlib import Path
@@ -103,9 +104,41 @@ def _cmd_resume(args: argparse.Namespace) -> int:
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
+    # Imported here, not at module scope: `openai_backend` is stdlib-only, but the
+    # CLI must keep working when optional extras are absent.
+    from .llm.openai_backend import PROVIDERS
+
     print(f"coagent {__version__}  (python {platform.python_version()}, {platform.system()})")
     source = cfg.source or "(defaults — no .coagent/config.toml found)"
     print(f"config:  {source}")
+
+    provider = cfg.model.provider
+    if provider.enabled:
+        # Provider mode is not a GPU workload; say what will actually be used and
+        # be explicit that inference leaves the machine (PRD FR-MDL-7).
+        spec = PROVIDERS.get(provider.name)
+        target = provider.base_url or (spec.base_url if spec else f"{provider.name} (unresolved)")
+        print(f"model:   {provider.model or (spec.default_model if spec else '(unset)')} via {provider.name or target}")
+        print(f"endpoint: {target}")
+        key_env = provider.api_key_env or (
+            PROVIDERS.get(provider.name).api_key_env if provider.name in PROVIDERS else ""
+        )
+        if key_env:
+            present = "set" if os.environ.get(key_env) else "NOT SET"
+            print(f"api key: ${key_env} ({present})")
+        else:
+            print("api key: none configured")
+        loopback = any(h in target for h in ("localhost", "127.0.0.1", "0.0.0.0"))
+        print(
+            "egress:  local endpoint (no traffic leaves this machine)"
+            if loopback
+            else "egress:  prompts and file contents ARE sent to the endpoint above"
+        )
+        print("gpu:     not required in provider mode")
+        print(f"verify:  {cfg.verify.commands}")
+        print(f"durable: {cfg.durability.mode} -> {cfg.durability.remote}")
+        return 0
+
     print(f"model:   {cfg.model.name} @ {cfg.model.quant}, ctx {cfg.model.max_context}")
     print(f"verify:  {cfg.verify.commands}")
     print(f"durable: {cfg.durability.mode} -> {cfg.durability.remote}")

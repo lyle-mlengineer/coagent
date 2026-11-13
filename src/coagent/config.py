@@ -45,6 +45,47 @@ class ConfigError(RuntimeError):
 
 
 @dataclass(slots=True)
+class ModelProviderConfig:
+    """`[model.provider]` — run against an OpenAI-compatible endpoint instead of a
+    local 4-bit model.
+
+    Off by default. PRD FR-MDL-7 guarantees no inference egress in the shipped
+    configuration; setting `enabled = true` is an explicit decision to send your
+    source code to that provider, and the agent announces it at session start.
+    """
+
+    enabled: bool = False
+    #: A known preset (groq, openrouter, nvidia, together, fireworks, ollama,
+    #: lmstudio, vllm) — see `coagent.llm.openai_backend.PROVIDERS`.
+    name: str = ""
+    #: Overrides the preset. Any OpenAI-compatible endpoint works.
+    base_url: str = ""
+    #: Overrides the preset's default model.
+    model: str = ""
+    #: Environment variable holding the key. Never the key itself: the config is
+    #: committed to the repo.
+    api_key_env: str = ""
+    #: Context window for budget arithmetic; hosted APIs are not T4-bound.
+    max_context: int = 32768
+    timeout_s: int = 120
+
+    def __post_init__(self) -> None:
+        if self.enabled and not (self.base_url or self.name):
+            raise ConfigError(
+                "[model.provider] is enabled but names no provider. Set `name` to a known "
+                "preset (groq, openrouter, nvidia, together, fireworks, ollama, lmstudio, "
+                "vllm) or set `base_url` for your own endpoint."
+            )
+        if self.max_context < 2048:
+            raise ConfigError(
+                f"model.provider.max_context={self.max_context} is too small for a coding "
+                "task; use at least 2048."
+            )
+        if self.timeout_s < 1:
+            raise ConfigError(f"model.provider.timeout_s must be >= 1, got {self.timeout_s}.")
+
+
+@dataclass(slots=True)
 class ModelConfig:
     name: str = "Qwen/Qwen2.5-Coder-7B-Instruct"
     quant: str = "nf4"
@@ -57,10 +98,13 @@ class ModelConfig:
     constrained: bool = False
     fallback_name: str = "Qwen/Qwen2.5-Coder-3B-Instruct"
     fallback_max_context: int = 8192
+    provider: ModelProviderConfig = field(default_factory=ModelProviderConfig)
 
     def __post_init__(self) -> None:
-        if self.max_context > 12288:
-            # PRD D2: the cap is hard, not advisory.
+        if self.max_context > 12288 and not self.provider.enabled:
+            # PRD D2: the cap is hard, not advisory — but it exists because a free
+            # T4 must hold the KV cache. A hosted provider has no such envelope, so
+            # the cap does not apply there (the provider sets its own max_context).
             raise ConfigError(
                 f"model.max_context={self.max_context} exceeds the hard cap of 12288 "
                 "for the free T4 envelope (PRD D2)."
@@ -209,7 +253,30 @@ def _build_section(name: str, cls: type, data: Any) -> Any:
             f"[{name}] has unknown key(s): {', '.join(sorted(unknown))}. "
             f"Known keys: {', '.join(sorted(known))}."
         )
-    return cls(**data)
+    # A nested dataclass field is a sub-table: build it with the same validation
+    # so `[model.provider]` rejects typos instead of silently ignoring them.
+    # `f.type` is a *string* here because of `from __future__ import annotations`,
+    # so resolve it through the module that defines the class.
+    kwargs: dict[str, Any] = {}
+    for f in fields(cls):
+        if f.name not in data:
+            continue
+        nested_cls = _resolve_field_type(cls, f.type)
+        if nested_cls is not None and isinstance(data[f.name], dict):
+            kwargs[f.name] = _build_section(f"{name}.{f.name}", nested_cls, data[f.name])
+        else:
+            kwargs[f.name] = data[f.name]
+    return cls(**kwargs)
+
+
+def _resolve_field_type(cls: type, annotation: Any) -> type | None:
+    """The dataclass a field annotation names, or None if it is not one."""
+    if not isinstance(annotation, str):
+        return annotation if is_dataclass(annotation) else None
+    candidate = globals().get(annotation)
+    if candidate is None or not isinstance(candidate, type) or not is_dataclass(candidate):
+        return None
+    return candidate
 
 
 def load_config(path: str | Path | None = None, *, start: str | Path | None = None) -> Config:
@@ -281,10 +348,19 @@ def _dump_toml(cfg: Config) -> str:
     for name, cls in _SECTIONS.items():
         section = getattr(cfg, name)
         lines.append(f"[{name}]")
+        nested: list[tuple[str, Any]] = []
         for f in fields(cls):
             value = getattr(section, f.name)
+            if is_dataclass(value):
+                nested.append((f"{name}.{f.name}", value))
+                continue
             lines.append(f"{f.name} = {_toml_value(value)}")
         lines.append("")
+        for table, obj in nested:
+            lines.append(f"[{table}]")
+            for f in fields(obj):
+                lines.append(f"{f.name} = {_toml_value(getattr(obj, f.name))}")
+            lines.append("")
     return "\n".join(lines)
 
 
