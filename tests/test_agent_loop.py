@@ -340,3 +340,74 @@ def test_a_large_artifact_never_reaches_git(repo: Path) -> None:
     tracked = _git(repo, "ls-files", "artifacts").splitlines()
     assert not any("huge.png" in t for t in tracked), "a 20 MB file must not be committed"
     assert not any("huge.png" in a for a in result.artifacts), "the trailer must not claim it"
+
+
+# ------------------------------------------- the fallback plan must be completable
+#
+# Reproduced on a real run: the model was given `_fallback_plan()`, wrote a file,
+# and the task still died in the repeat detector with `files_changed=[]` and
+# "You have repeated the same action too many times".
+#
+# Two steps made `plan.complete` unreachable for that plan shape:
+#   * "make the change the task asks for" names no file, so `tick_matching(path)`
+#     could never match it;
+#   * a passing `run_tests` never ticked anything, so a model that ran the checks
+#     itself (the correct behaviour) saw its plan still open and re-ran them until
+#     the loop detector stopped the task.
+
+FALLBACK_PLAN = (
+    "# add a chunked loader\n"
+    "- [ ] make the change the task asks for\n"
+    "- [ ] run the checks"
+)
+_READ_GREET = '```json\n{"tool": "read_file", "args": {"path": "greet.py"}}\n```'
+# A write that satisfies the generic "make the change" step (no filename in it).
+_WRITE_GREET = (
+    '```json\n{"tool": "edit_file", "args": {"path": "greet.py", '
+    '"search": "VALUE = 1", "replace": "VALUE = 1\n\ndef hello():\n    return 1"}}\n```'
+)
+_RUN_TESTS = (
+    '```json\n{"tool": "run_tests", "args": '
+    '{"argv": ["python", "-c", "import greet"]}}\n```'
+)
+
+
+def test_a_nameless_change_step_is_satisfied_by_the_first_write(repo: Path) -> None:
+    """\"make the change the task asks for\" must be tickable by *some* tool."""
+    agent = _agent(repo, ["notes", FALLBACK_PLAN, _READ_GREET, _WRITE_GREET])
+    result = agent.run("add a hello function")
+    agent.close()
+
+    assert result.done is True
+    assert result.stopped_by == "complete"
+    assert result.commits >= 1
+    assert "greet.py" in result.files_changed
+    # Not stopped by the repeat detector — the reported failure mode.
+    assert result.stopped_by != "loop"
+
+
+def test_a_passing_run_tests_ticks_the_verification_step(repo: Path) -> None:
+    """The model running the checks itself must be able to finish the plan."""
+    agent = _agent(repo, ["notes", FALLBACK_PLAN, _READ_GREET, _WRITE_GREET, _RUN_TESTS])
+    result = agent.run("add a hello function")
+    agent.close()
+
+    assert result.done is True
+    assert result.stopped_by != "loop"
+
+    plans = list((repo / ".coagent" / "plans").glob("*.md"))
+    assert plans, "the plan file must persist"
+    text = plans[0].read_text(encoding="utf-8")
+    assert text.count("- [x]") == 2, f"both steps should be ticked, got:\n{text}"
+
+
+def test_run_tests_alone_does_not_complete_a_plan(repo: Path) -> None:
+    """A plan of pure checks is not finished work (same rule as pure reads)."""
+    agent = _agent(repo, ["notes", FALLBACK_PLAN, _RUN_TESTS])
+    result = agent.run("add a hello function")
+    agent.close()
+
+    assert result.done is False
+    plans = list((repo / ".coagent" / "plans").glob("*.md"))
+    if plans:
+        assert "- [x] run the checks" not in plans[0].read_text(encoding="utf-8")

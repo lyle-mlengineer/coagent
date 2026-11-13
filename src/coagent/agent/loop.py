@@ -650,6 +650,12 @@ class coAgent:
                 self.state and self.state.note_written(path)
                 # A step that names this file is satisfied by editing it.
                 self.state and self.state.plan.tick_matching(path)
+                # A step that names no file (the fallback plan's "make the change
+                # the task asks for") is satisfied by the first real write. Without
+                # this such a step can never be ticked by any tool, so the plan is
+                # structurally unable to reach complete and the task always dies in
+                # the repeat detector with zero commits.
+                self.state and self.state.plan.tick_matching("make the change")
                 self.state and self.state.plan.write(
                     self.state.plan.title, self.state.plan.steps
                 )
@@ -673,6 +679,22 @@ class coAgent:
                 # otherwise a plan of pure reads would report complete.
                 if len(self.state.files_written) > 0:
                     self.state.plan.tick_matching(path)
+        elif (
+            tool == "run_tests"
+            and result.ok
+            and self.state is not None
+            and self.state.files_written
+        ):
+            # The model asked for the checks itself. A passing run satisfies a
+            # "run the tests" plan step — but only once files have changed, for
+            # the same reason as reads: a plan of pure checks is not complete
+            # work. Without this branch the step never ticks, so a model that
+            # (correctly) runs the tests sees its plan still open, runs them
+            # again with identical argv, and trips the repeat detector — the
+            # task then dies with "repeated the same action" and zero commits.
+            self.state.plan.tick_matching("run")
+            self.state.plan.tick_matching("test")
+            self.state.plan.write(self.state.plan.title, self.state.plan.steps)
 
         self.log.append(
             LogRecord(
