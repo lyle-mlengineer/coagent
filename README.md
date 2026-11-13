@@ -1,7 +1,7 @@
 # coAgent
 
 <p align="center">
-  <img src="./assets/cover.png" alt="coAgent — a private coding agent for the free Google Colab T4 that commits every checkpoint back to git" width="100%" />
+  <img src="https://raw.githubusercontent.com/lyle-mlengineer/coagent/main/assets/cover.png" alt="coAgent — a private coding agent for the free Google Colab T4 that commits every checkpoint back to git" width="100%" />
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/License-Apache%202.0-D22128?style=for-the-badge&logo=apache&logoColor=white" alt="Apache 2.0"/>
 </p>
 
-**[Open in Colab](https://colab.research.google.com/github/lyle-mlengineer/coagent/blob/main/notebooks/bootstrap.ipynb) · [Design](./DESIGN.md) · [PRD](./PRD.md) · [Web front door](https://github.com/lyle-mlengineer/coagent-web)**
+**[Open in Colab](https://colab.research.google.com/github/lyle-mlengineer/coagent/blob/main/notebooks/bootstrap.ipynb) · [Design](https://github.com/lyle-mlengineer/coagent/blob/main/DESIGN.md) · [PRD](https://github.com/lyle-mlengineer/coagent/blob/main/PRD.md) · [Web front door](https://github.com/lyle-mlengineer/coagent-web)**
 
 > **Alpha release.** `0.1.0` is published on PyPI as [`co-agent-coder`](https://pypi.org/project/co-agent-coder/). The architecture lives in `DESIGN.md` and the requirements in `PRD.md`; the interfaces below are the shipped v0.1 surface.
 
@@ -338,7 +338,7 @@ Machine learning engineer working on speech and voice AI by day, and building co
 - **Quality** — [pytest](https://pytest.org/) and [ruff](https://docs.astral.sh/ruff/) are the reference verifier commands in the eval suite.
 - **Platform** — [Google Colab](https://colab.research.google.com/) free tier; notebooks and Drive are the runtime and the artifact store.
 - **Artwork** — the cover was composed for this project by Lyle Okoth; badges come from [shields.io](https://shields.io/) and brand marks from [Simple Icons](https://simpleicons.org/).
-- **License** — released under the [Apache License 2.0](./LICENSE).
+- **License** — released under the [Apache License 2.0](https://github.com/lyle-mlengineer/coagent/blob/main/LICENSE).
 
 ---
 
