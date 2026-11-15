@@ -3,6 +3,19 @@
 All notable changes to coAgent. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-11-14
+
+### Changed
+
+- **Python 3.13 is now the minimum.** `requires-python` is `>=3.13`, and the
+  classifiers list 3.13 and 3.14 only. Consequences:
+  - The `tomli` backport dependency is gone — `tomllib` is imported directly in
+    `config.py` and `tools/fs.py`, so there is no version shim left to test.
+  - Ruff `target-version = "py313"`, so `UP` rules may suggest 3.12/3.13-only
+    syntax (`type` statements, builtin generics in non-`from __future__` files).
+  - The GPU extra bounds are unchanged; re-check `torch`/`transformers` wheels
+    for the Python version of each install target before publishing.
+
 ## [0.2.0] - 2026-11-13
 
 ### Added

@@ -33,7 +33,7 @@ __all__ = [
 ]
 
 
-class SafetyClass(str, enum.Enum):
+class SafetyClass(enum.StrEnum):
     """How a tool is classified for the approval matrix."""
 
     READ = "read"
@@ -43,7 +43,7 @@ class SafetyClass(str, enum.Enum):
     UI = "ui"
 
 
-class RiskClass(str, enum.Enum):
+class RiskClass(enum.StrEnum):
     """The action classes named in config `[safety] require_approval`."""
 
     NETWORK = "network"
@@ -52,7 +52,7 @@ class RiskClass(str, enum.Enum):
     WRITE_OUTSIDE_REPO = "write_outside_repo"
 
 
-class Verdict(str, enum.Enum):
+class Verdict(enum.StrEnum):
     ALLOW = "allow"
     ASK = "ask"
     DENY = "deny"

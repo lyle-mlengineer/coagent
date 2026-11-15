@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "co-agent-coder"
-version = "0.2.0"
+version = "0.2.1"
 description = "A private AI coding agent for the free Google Colab T4: local 7B model, git-backed memory, reviewable branches."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Lyle Okoth" }]
@@ -23,15 +23,15 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Code Generators",
 ]
 dependencies = [
   # Core runtime: config, loop, tools, git plumbing. Deliberately light so that
   # `pip install coagent` on a laptop is fast and the test suite runs on CPU.
-  "tomli>=2.0.1; python_version < '3.11'",
+  # Requires Python >= 3.13, so TOML parsing comes from the stdlib `tomllib`:
+  # no third-party `tomli` backport is needed.
 ]
 
 [project.optional-dependencies]
@@ -108,7 +108,7 @@ markers = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py313"
 src = ["src", "tests"]
 
 [tool.ruff.lint]

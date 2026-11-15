@@ -441,7 +441,7 @@ The package shall refuse to run against an incompatible `.coagent/config.toml` s
 | NFR-4 | Context | No request exceeds 12,288 tokens |
 | NFR-5 | Recovery | Resume to first token ≤10 min after a kill, including model load |
 | NFR-6 | Security | Zero secrets in produced files; non-interactive mode defaults to deny |
-| NFR-7 | Compatibility | Colab Linux, Python 3.11, CUDA 12.x, pinned `transformers` |
+| NFR-7 | Compatibility | Colab Linux, Python 3.13, CUDA 12.x, pinned `transformers` |
 | NFR-8 | Observability | JSONL metrics per step; `coagent report` builds a session summary |
 | NFR-9 | Accessibility | Keyboard-operable controls, AA contrast, status never conveyed by color alone |
 | NFR-10 | Cost | Zero marginal cost beyond the free tier; no paid API calls anywhere |

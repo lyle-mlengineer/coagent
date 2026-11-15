@@ -41,7 +41,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -117,7 +117,7 @@ class Manifest:
     """`artifacts/<run-id>/manifest.json` — every artifact, sorted for stable diffs."""
 
     run_id: str
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
     artifacts: list[ArtifactRecord] = field(default_factory=list)
 
     def add(self, record: ArtifactRecord) -> ArtifactRecord:
@@ -428,4 +428,4 @@ def _safe_name(name: str, mime: str) -> str:
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")

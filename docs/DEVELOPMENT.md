@@ -6,8 +6,11 @@ testable on a laptop CPU**. That rule is what keeps the loop debuggable.
 
 ## Install for development
 
+coAgent targets **Python 3.13+**. Use a 3.13 (or newer) interpreter for the venv;
+`pip install` refuses anything older.
+
 ```bash
-python -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"            # light: no torch, no transformers
 ```

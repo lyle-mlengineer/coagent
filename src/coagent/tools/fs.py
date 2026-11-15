@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import difflib
 import re
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -474,12 +475,8 @@ def _syntax_check(path: Path, text: str) -> str:
         return ""
     if suffix in {".toml", ".tml"}:
         try:
-            from ..config import tomllib
-        except ImportError:  # pragma: no cover
-            return ""
-        try:
             tomllib.loads(text)
-        except Exception as exc:  # noqa: BLE001 - tomllib raises variants by version
+        except Exception as exc:  # noqa: BLE001 - TOMLDecodeError subclass first
             return str(exc)
         return ""
     return ""  # unknown language: the configured linter is the gate (FR-VER-4)

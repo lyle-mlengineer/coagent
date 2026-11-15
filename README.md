@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Status-design%20v1.0-FFC24B?style=for-the-badge&logoColor=black" alt="Design v1.0"/>
   <img src="https://img.shields.io/badge/Target-free%20Colab%20T4-F9AB00?style=for-the-badge&logo=googlecolab&logoColor=white" alt="Free Colab T4"/>
   <img src="https://img.shields.io/badge/Model-7B%20NF4%20%C2%B7%2012k-7EF0C0?style=for-the-badge&logoColor=black" alt="7B NF4, 12k context"/>
-  <img src="https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11"/>
+  <img src="https://img.shields.io/badge/Python-3.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.13"/>
   <a href="https://coagent-web.onrender.com"><img src="https://img.shields.io/badge/Web-coagent--web-E05785?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Web front door"/></a>
   <a href="https://colab.research.google.com/github/lyle-mlengineer/coagent/blob/main/notebooks/bootstrap.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open in Colab"/></a>
   <img src="https://img.shields.io/badge/License-Apache%202.0-D22128?style=for-the-badge&logo=apache&logoColor=white" alt="Apache 2.0"/>
@@ -16,7 +16,7 @@
 
 **[Open in Colab](https://colab.research.google.com/github/lyle-mlengineer/coagent/blob/main/notebooks/bootstrap.ipynb) · [Design](https://github.com/lyle-mlengineer/coagent/blob/main/DESIGN.md) · [PRD](https://github.com/lyle-mlengineer/coagent/blob/main/PRD.md) · [Web front door](https://coagent-web.onrender.com)**
 
-> **Alpha release.** `0.2.0` is published on PyPI as [`co-agent-coder`](https://pypi.org/project/co-agent-coder/). The architecture lives in `DESIGN.md` and the requirements in `PRD.md`; the interfaces below are the shipped v0.1 surface.
+> **Alpha release.** `0.2.1` is published on PyPI as [`co-agent-coder`](https://pypi.org/project/co-agent-coder/). The architecture lives in `DESIGN.md` and the requirements in `PRD.md`; the interfaces below are the shipped v0.1 surface.
 
 ### Install
 
@@ -281,7 +281,7 @@ deny = ["git push --force", "git push origin main"]
 ## Tech stack
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python%203.11-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11"/>
+  <img src="https://img.shields.io/badge/Python%203.13-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.13"/>
   <img src="https://img.shields.io/badge/PyTorch-EE4C2C?style=flat-square&logo=pytorch&logoColor=white" alt="PyTorch"/>
   <img src="https://img.shields.io/badge/Transformers-FFD21E?style=flat-square&logo=huggingface&logoColor=black" alt="Transformers"/>
   <img src="https://img.shields.io/badge/bitsandbytes%20NF4-4B8BBE?style=flat-square" alt="bitsandbytes"/>

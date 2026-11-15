@@ -153,7 +153,7 @@ class Budget:
         )
 
 
-class LoopVerdict(str, enum.Enum):
+class LoopVerdict(enum.StrEnum):
     CONTINUE = "continue"
     REPLAN = "replan"
     STOP = "stop"

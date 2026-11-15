@@ -7,16 +7,11 @@ refuse to run when its schema is newer than this package understands
 
 from __future__ import annotations
 
-import sys
+import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Any
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - Colab is 3.11+, this is for laptop dev
-    import tomli as tomllib
 
 SCHEMA_VERSION = 1
 CONFIG_RELPATH = Path(".coagent") / "config.toml"

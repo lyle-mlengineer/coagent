@@ -37,7 +37,7 @@ class BudgetError(RuntimeError):
     """The request exceeds the context budget. Raised before generation."""
 
 
-class StopReason(str, enum.Enum):
+class StopReason(enum.StrEnum):
     STOP = "stop"  # model emitted EOS
     LENGTH = "length"  # hit max_new_tokens (may be truncated — say so)
     CANCELLED = "cancelled"  # user pressed stop
